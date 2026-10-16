@@ -1,0 +1,37 @@
+# Simulation and benchmark sources/results
+/modelsim/
+/bench/
+
+# Generated previews, temporary work, backups and FPGA builds
+/preview/
+/tmp/
+/backups/
+/td/
+/firmware/Output/
+
+# Generated payloads and binaries
+*.bin
+*.bit
+*.db
+*.area
+*.timing
+*.tsm
+*.bid
+*.qdb
+*.qpg
+*.qtl
+*.log
+*.wlf
+*.vcd
+*.fst
+*.fsdb
+*.ppm
+*.axf
+*.o
+*.map
+*.disassembly.txt
+*.exe
+*.hex
+
+# ARM proprietary Cortex-M0 core (do not redistribute)
+/rtl/cortexm0ds_logic.v

@@ -39,5 +39,3 @@
 *.exe
 *.hex
 
-# ARM proprietary Cortex-M0 core (do not redistribute)
-/rtl/cortexm0ds_logic.v

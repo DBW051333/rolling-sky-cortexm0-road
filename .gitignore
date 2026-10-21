@@ -6,7 +6,13 @@
 /preview/
 /tmp/
 /backups/
-/td/
+/td/*
+!/td/rolling_road.al
+!/td/build.tcl
+!/td/contr.adc
+!/td/contr.sdc
+!/td/pll_ip.v
+/td/rolling_road_Runs/
 /firmware/Output/
 
 # Generated payloads and binaries

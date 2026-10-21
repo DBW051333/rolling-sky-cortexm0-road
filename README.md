@@ -64,11 +64,13 @@ LCD 每帧只设置一次 240×320 绘图窗口，依靠屏内地址自动递增
 
 ## 构建
 
-`./build-fpga.ps1` 编译固件并执行 TD 综合、布局布线及 bitstream 生成。工程 `td/rolling_road.al`，正常映像 `firmware/code.hex`，下载 `td/rolling_road.bit`。最新下载日志为 `td/program-sd-r7.log`。SRAM 下载断电不保留。
+`./build-fpga.ps1` 编译固件并执行 TD 综合、布局布线及 bitstream 生成。工程文件、构建脚本、引脚约束、时序约束和 PLL 源码在 `td/`；打开 `td/rolling_road.al` 即可查看工程。正常映像为 `firmware/code.hex`，生成的 bitstream 为 `td/rolling_road.bit`（生成物不纳入版本库）。SRAM 下载断电不保留。
 
-性能对比使用 `firmware/build.ps1 -Profile` 与 `modelsim/run_profile_before.do`、`run_profile_after.do`，分别计时无墙/近墙的逻辑、投影及完整绘制路径，日志 `modelsim/profile-before.log`、`profile-after.log`。仅跳过上电等待，保留真实 M0/AHB/LCD 像素时序；不代表实体 LCD 实测帧率。旧源码快照为 `bench/wall-profile-before/`。正常下载仍用非 Profile 固件，优化级别已从 -Oz 改为 -O2。`run_profile_fast.do` 与 `profile-fast.log` 对应最终 O2 计时；`profile-after.log` 是保留 -Oz 的中间版本。O2 Profile 省去计时区间外的首次清屏，正常固件仍清屏。
+本仓库不包含 ARM DesignStart Cortex-M0 核心源文件 `rtl/cortexm0ds_logic.v`；该文件带有 ARM 保密/专有许可声明，使用者须自行通过适用许可取得并放入 `rtl/`。没有该文件时工程无法完整综合。构建还需要 Anlogic TD 和 ARM Compiler 6。Windows PowerShell 中可通过环境变量 `ARMCLANG_BIN` 指向包含 `armclang.exe` 的目录，`TD_COMMANDS_PROMPT` 指向 `td_commands_prompt.exe`；未设置时脚本尝试原作者机器上的默认安装目录。TD 芯片数据库由软件安装提供。
 
-`modelsim/`、`bench/` 中历史日志仅代表对应旧版本。原始课程 OrderTerminal 工程未修改。本次不生成预览或可视化文件。
+本仓库按约定不上传仿真目录 `modelsim/` 和基准测试目录 `bench/`，因此这里保留的历史性能与仿真记录无法在仓库内重跑；需要相应仿真/基准源文件的协作者应从项目所有者处另行获取。正常下载使用非 Profile 固件，优化级别为 -O2。
+
+原始课程 OrderTerminal 工程未修改。
 
 美术包 RSART.BIN 与判定包分离；原背景及树模型从 SD 一次读入预留缓存，逐帧无需读美术文件。无卡时使用简单备用外观。详见 HILLS.md。
 
@@ -76,4 +78,4 @@ Hills 当前有 38 个设计关口和三段错列连跳，已加入短跳与分�
 
 ## External processor IP
 
-`rtl/cortexm0ds_logic.v` is the ARM Cortex-M0 DesignStart processor logic and carries an ARM confidential/proprietary licensing notice. It is intentionally excluded from this public repository. A board build requires a copy obtained under an applicable ARM license; do not add or redistribute the licensed source unless the license permits it.
+`rtl/cortexm0ds_logic.v` is the ARM Cortex-M0 DesignStart processor logic and carries an ARM confidential/proprietary licensing notice. It is intentionally excluded from this private repository. A board build requires a copy obtained under an applicable ARM license; do not add or redistribute the licensed source unless the license permits it.

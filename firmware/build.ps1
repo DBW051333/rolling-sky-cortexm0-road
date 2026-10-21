@@ -2,7 +2,9 @@ param([switch]$Simulation,[switch]$Benchmark,[switch]$Profile)
 $ErrorActionPreference='Stop'
 Push-Location $PSScriptRoot
 try {
-    $bin='C:\Keil_v5\ARM\ARMCLANG\bin'
+    $bin=$env:ARMCLANG_BIN
+    if(-not $bin){$bin='C:\Keil_v5\ARM\ARMCLANG\bin'}
+    if(-not (Test-Path -LiteralPath (Join-Path $bin 'armclang.exe') -PathType Leaf)){throw "Set ARMCLANG_BIN to the folder containing armclang.exe; not found: $bin"}
     New-Item -ItemType Directory -Path Output -Force | Out-Null
     $flags=@(); $image='code.hex'
     if($Simulation){$flags=@('-DROAD_SIM_FAST_INIT');$image='code.sim.hex'}

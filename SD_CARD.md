@@ -4,7 +4,7 @@
 
 将 sd_payload/RSLEVELS.BIN 和 sd_payload/RSART.BIN 放在 FAT32 SDHC 卡根目录。菜单 KEY4 重新读取，KEY6/14 选关，KEY8 开始。右下绿色 SD 表示目录加载成功；ROM 表示使用备用关卡。游戏内 KEY4 重开、KEY8 暂停、KEY12 返回。
 
-新版判定包 13312 B，共四关：01 Warmup、02 Changing lanes、03 Long road（1024 行）、04 Hills（288 行，正常约 1 分 37 秒）。无卡时 ROM 三关，03 为同一张 Hills 地图。历史 SD 包已备份至 backups/sd。本轮 V3 判定包和 RSART002 美术包已生成，但尚未看到重新接入的 SD 卡，当前待写入；写好后需安全弹出卡、插回板子再 KEY4 重读。
+当前源数据生成的判定包为 13312 B（4 关：01 Warmup、02 Changing lanes、03 Long road、04 Hills），美术包为 7680 B。两个 `.BIN` 是生成物，按仓库规则不提交；协作者需按 `HANDOFF_GUIDE.md` 重新生成并写到 FAT32 SDHC 卡根目录。最新记录的源/卡判定包哈希一致（见 `VALIDATION.md`）；最新固件下载后是否已重新插卡读取及显示仍待板上确认。无卡时 ROM 三关，03 为 Hills。
 
 ## 判定数据格式 V3
 

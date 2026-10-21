@@ -64,6 +64,8 @@ LCD 每帧只设置一次 240×320 绘图窗口，依靠屏内地址自动递增
 
 ## 构建
 
+新协作者请先读 [开发交接指南](HANDOFF_GUIDE.md)，其中列出工具、构建步骤、SD 卡文件和验证边界。
+
 `./build-fpga.ps1` 编译固件并执行 TD 综合、布局布线及 bitstream 生成。工程文件、构建脚本、引脚约束、时序约束和 PLL 源码在 `td/`；打开 `td/rolling_road.al` 即可查看工程。正常映像为 `firmware/code.hex`，生成的 bitstream 为 `td/rolling_road.bit`（生成物不纳入版本库）。SRAM 下载断电不保留。
 
 仓库已包含 ARM DesignStart Cortex-M0 核心源文件 `rtl/cortexm0ds_logic.v`，供获许可的项目成员使用；所有使用和复制仍须符合适用的 ARM 许可协议。构建还需要 Anlogic TD 和 ARM Compiler 6。Windows PowerShell 中可通过环境变量 `ARMCLANG_BIN` 指向包含 `armclang.exe` 的目录，`TD_COMMANDS_PROMPT` 指向 `td_commands_prompt.exe`；未设置时脚本尝试原作者机器上的默认安装目录。TD 芯片数据库由软件安装提供。

@@ -1,0 +1,41 @@
+# Simulation and benchmark sources/results
+/modelsim/
+/bench/
+
+# Generated previews, temporary work, backups and FPGA builds
+/preview/
+/tmp/
+/backups/
+/td/*
+!/td/rolling_road.al
+!/td/build.tcl
+!/td/contr.adc
+!/td/contr.sdc
+!/td/pll_ip.v
+/td/rolling_road_Runs/
+/firmware/Output/
+
+# Generated payloads and binaries
+*.bin
+*.bit
+*.db
+*.area
+*.timing
+*.tsm
+*.bid
+*.qdb
+*.qpg
+*.qtl
+*.log
+*.wlf
+*.vcd
+*.fst
+*.fsdb
+*.ppm
+*.axf
+*.o
+*.map
+*.disassembly.txt
+*.exe
+*.hex
+

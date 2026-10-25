@@ -22,6 +22,11 @@
 #define ROAD_BALL_Y 192
 #define ROAD_JUMP_MS 1536u
 #define ROAD_SHORT_JUMP_MS 768u
+/* Gem and finish-line markers are art-independent until skins catch up. */
+#define ROAD_GEM_CELL 0x03efu
+#define ROAD_GEM_CORE 0x07ffu
+#define ROAD_FINISH_A 0xffffu
+#define ROAD_FINISH_B 0x0000u
 struct Level;
 typedef struct {
     uint32_t row;
@@ -42,6 +47,9 @@ typedef struct {
     uint16_t jump_ms,jump_row,jump_total;
     uint16_t death_ms;
     uint8_t death_kind;
+    uint32_t gem_bits;   /* collected gems, one bit per gem index */
+    uint16_t gem_cursor,mech_cursor;
+    uint8_t gems_got;
 } Road;
 typedef struct {
     void (*begin_line)(unsigned x,unsigned y,unsigned pixels,void *context);

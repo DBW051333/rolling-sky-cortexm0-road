@@ -11,7 +11,7 @@ try {
     if($Profile){$flags=@('-DROAD_SIM_FAST_INIT','-DROAD_PROFILE');$image='code.profile.hex'}
     if($Benchmark){$flags=@('-DROAD_SIM_FAST_INIT','-DROAD_BENCHMARK');$image='code.bench.hex'}
     foreach($file in @('main','road','level','obstacle','walls','sd_levels','glass','appearance')) {
-        $opt=if($file -in @('appearance','main')){'-Oz'}else{'-O2'}
+        $opt=if($file -in @('appearance','main','sd_levels')){'-Oz'}else{'-O2'}
         & "$bin\armclang.exe" --target=arm-arm-none-eabi -mcpu=cortex-m0 -mthumb $opt -ffreestanding -fno-builtin -fno-common -g -Wall -Wextra @flags -c "$file.c" -o "Output/$file.o"
         if($LASTEXITCODE){throw "Compile failed: $file"}
     }

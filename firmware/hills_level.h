@@ -110,4 +110,18 @@ static const TileEvent hills_tiles[]={
     {265,16,1},
     {270,2,1},
 };
-static const Level hills_level={hills_ground,hills_tiles,288,67,40,4};
+static const LevelGem hills_gems[]={
+    {10,1},
+    {18,2},
+    {26,3},
+    {34,2},
+    {42,1},
+    {62,2},
+    {90,1},
+    {124,1},
+    {186,2},
+    {222,2},
+    {250,2},
+    {282,2},
+};
+static const Level hills_level={hills_ground,hills_tiles,288,67,40,4,hills_gems,0,12,0};

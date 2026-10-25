@@ -29,4 +29,13 @@ int obstacle_volume_from_tile(unsigned kind,uint32_t row,unsigned column,
 int obstacle_hits_ball(const ObstacleVolume *volume,int32_t x_q8,
                        uint32_t z_q8,unsigned bottom_q8);
 
+/* Dynamic mechanisms reuse the same sphere-vs-box test; only the pose varies.
+ * The phase clock is the ball's travelled distance z, so pause, restart and
+ * frame jitter never change the rhythm a player has learned. */
+struct LevelMech;
+unsigned obstacle_laser_state(const struct LevelMech *mech,uint32_t z);
+int obstacle_mover_offset(const struct LevelMech *mech,uint32_t z);
+int obstacle_mech_volume(const struct LevelMech *mech,uint32_t z,
+                         ObstacleVolume *volume);
+
 #endif

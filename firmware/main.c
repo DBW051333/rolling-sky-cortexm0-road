@@ -158,6 +158,55 @@ static int start_level(unsigned selected,unsigned card,Road *r,uint32_t *camera)
     level_load(r,levels[selected],camera);
     return 1;
 }
+/* HUD: a 2-pixel progress bar across the top plus a gem counter, redrawn
+ * every frame over the freshly painted road. Glyph rows are one LCD window
+ * each, so the whole overlay stays around a thousand pixels per frame. */
+static uint32_t hud_divide(uint32_t n,uint32_t d) {
+    uint32_t q=0,bit=1;
+    if(!d) return 0;
+    while(d<=n && !(d&0x80000000u)) { d<<=1; bit<<=1; }
+    while(bit) { if(n>=d) { n-=d; q|=bit; } d>>=1; bit>>=1; }
+    return q;
+}
+static const uint8_t hud_digits[10][5]={
+    {7,5,5,5,7},{2,6,2,2,7},{7,1,7,4,7},{7,1,7,1,7},{5,5,7,1,1},
+    {7,4,7,1,7},{7,4,7,5,7},{7,1,1,1,1},{7,5,7,5,7},{7,5,7,1,7}
+};
+static void hud_digit(unsigned x,unsigned y,unsigned digit) {
+    unsigned row;
+    for(row=0;row<5;row++) {
+        unsigned bits=hud_digits[digit][row],col;
+        wait_span(); window(x,y+row*2,6,2);
+        for(col=0;col<3;col++)
+            span(2,(bits>>(2-col))&1u?0xffffu:0x0000u,0);
+    }
+    wait_span();
+}
+static void hud_counter(unsigned gems) {
+    static const uint8_t widths[5]={1,3,5,3,1};
+    unsigned row,tens=0;
+    fill(3,4,28,16,0x0000u);
+    for(row=0;row<5;row++) {
+        wait_span(); window(7+(5-widths[row])/2,5+row*2,widths[row],2);
+        span(widths[row],0x07ffu,0);
+    }
+    /* Comparison ladder: -Oz rewrites a subtract loop back into a division
+     * call, and the image links without the EABI division helpers. */
+    tens=gems>=20?2u:gems>=10?1u:0u;
+    gems-=tens*10u;
+    hud_digit(16,5,tens);
+    hud_digit(23,5,gems);
+}
+static void hud_draw(const Road *r,uint32_t camera) {
+    uint32_t z=camera+r->depth_q8[ROAD_BALL_Y];
+    uint32_t total=(uint32_t)r->level->row_count*256u;
+    unsigned done=total?(unsigned)hud_divide(z*240u,total):0u;
+    if(done>ROAD_WIDTH) done=ROAD_WIDTH;
+    wait_span(); window(0,0,ROAD_WIDTH,2);
+    if(done) span(done,0xffe0u,0);
+    if(done<ROAD_WIDTH) span(ROAD_WIDTH-done,0x18e3u,0);
+    hud_counter(r->gems_got);
+}
 static void lcd_init(void) {
     static const uint8_t config[]={
         0xcf,3,0,0xc1,0x30, 0xed,4,0x64,3,0x12,0x81,
@@ -285,6 +334,7 @@ int main(void) {
             continue;
         }
         road_draw(&road,camera,points,&sink); wait_span();
+        hud_draw(&road,camera);
         if(state!=GAME_RUNNING) {
             window(0,0,ROAD_WIDTH,4);
             span(ROAD_WIDTH*4,state==GAME_CLEAR?0x07e0:0xf800,0);

@@ -9,9 +9,12 @@ static uint32_t row_tags[2],fat_lba,data_lba,clusters,part_end,spc;
 static uint32_t root_cluster;
 static uint32_t first_cluster,file_bytes,cursor_cluster,cursor_index,level_start;
 static uint32_t catalog[SD_LEVEL_MAX][2];
+static uint32_t gem_offsets[SD_LEVEL_MAX],mech_offsets[SD_LEVEL_MAX];
 static unsigned count,row_shift,row_stride,format_version;
 static uint16_t level_ids[SD_LEVEL_MAX];
-static TileEvent visible[32];
+static TileEvent visible[64];
+static LevelGem sd_gems[32];
+static LevelMech sd_mechs[24];
 Level sd_level;
 volatile unsigned sd_diag_stage,sd_diag_response,sd_diag_detail;
 static uint32_t le32(const uint8_t *p) {
@@ -153,7 +156,7 @@ unsigned sd_levels_mount(void) {
     if(!file_sector(0,sector)) return 0;
     sd_diag_stage=11;
     for(i=0;i<7;i++) if(sector[i]!=(uint8_t)"RSLEVEL"[i]) return 0;
-    if(sector[7]<'1' || sector[7]>'3') return 0;
+    if(sector[7]<'1' || sector[7]>'4') return 0;
     format_version=sector[7]-'0';
     row_shift=format_version>=2?6:7; row_stride=format_version>=2?8:4;
     count=le16(sector+8);
@@ -164,6 +167,16 @@ unsigned sd_levels_mount(void) {
            n*row_stride>file_bytes-offset*512) { count=0; return 0; }
         catalog[i][0]=n; catalog[i][1]=offset;
         level_ids[i]=(uint16_t)(row_stride==8?le16(sector+208+i*2):i+1);
+    }
+    /* V4 adds a per-level extension directory in sector 0: sparse gem and
+     * mechanism tables stored past the row data, referenced by sector. */
+    if(format_version>=4) {
+        uint32_t sectors=file_bytes/512;
+        for(i=0;i<count;i++) {
+            uint32_t gem=le32(sector+256+i*8),mech=le32(sector+260+i*8);
+            if((gem && gem>=sectors) || (mech && mech>=sectors)) { count=0; return 0; }
+            gem_offsets[i]=gem; mech_offsets[i]=mech;
+        }
     }
     sd_diag_stage=12;
     return count;
@@ -189,6 +202,51 @@ static int load_chunk(uint32_t chunk) {
     row_tags[slot]=chunk;
     return 1;
 }
+/* Sparse side tables: gems (3 B each) and mechanisms (9 B each). Both must
+ * arrive sorted by row because the runtime advances cursors over them. */
+static int load_tables(unsigned index) {
+    unsigned i;
+    sd_level.gems=sd_gems; sd_level.mechs=sd_mechs;
+    sd_level.gem_count=0; sd_level.mech_count=0;
+    if(format_version<4) return 1;
+    if(gem_offsets[index]) {
+        unsigned total;
+        if(!file_sector(gem_offsets[index],sector)) return 0;
+        total=le16(sector);
+        if(total>32) return 0;
+        for(i=0;i<total;i++) {
+            unsigned row=le16(sector+2+i*3);
+            if(row>=sd_level.row_count || sector[4+i*3]>=5 ||
+               (i && row<sd_gems[i-1].row)) return 0;
+            sd_gems[i].row=(uint16_t)row;
+            sd_gems[i].column=sector[4+i*3];
+        }
+        sd_level.gem_count=(uint8_t)total;
+    }
+    if(mech_offsets[index]) {
+        unsigned total;
+        if(!file_sector(mech_offsets[index],sector)) return 0;
+        total=le16(sector);
+        if(total>24) return 0;
+        for(i=0;i<total;i++) {
+            const uint8_t *p=sector+2+i*9;
+            unsigned row=le16(p),kind=p[3],shift=p[4],param;
+            if(row>=sd_level.row_count || p[2]>=5 || kind<1 || kind>2 ||
+               shift<2 || shift>5 || le16(p+5)>=(256u<<shift)) return 0;
+            param=le16(p+7);
+            if(param>(kind==MECH_LASER?640u:512u)) return 0;
+            if(i && row<sd_mechs[i-1].row) return 0;
+            sd_mechs[i].row=(uint16_t)row;
+            sd_mechs[i].column=p[2];
+            sd_mechs[i].kind=(uint8_t)kind;
+            sd_mechs[i].period_shift=(uint8_t)shift;
+            sd_mechs[i].phase=(uint16_t)le16(p+5);
+            sd_mechs[i].param=(uint16_t)param;
+        }
+        sd_level.mech_count=(uint8_t)total;
+    }
+    return 1;
+}
 int sd_levels_begin(unsigned index,Road *road,uint32_t *camera) {
     if(index>=count) return 0;
     level_start=catalog[index][1];
@@ -202,6 +260,7 @@ int sd_levels_begin(unsigned index,Road *road,uint32_t *camera) {
     sd_diag_stage=15;
     if(!load_chunk(1)) return 0;
     sd_diag_stage=16;
+    if(!load_tables(index)) return 0;
     level_load(road,&sd_level,camera);
     return sd_levels_prepare(road,*camera);
 }
@@ -222,7 +281,9 @@ int sd_levels_prepare(Road *road,uint32_t camera) {
         if(kind==TILE_FRAGILE || kind==TILE_JUMP || kind==TILE_SHORT_JUMP) continue; /* Glass geometry is handled by the ground layer. */
         mask=sd_levels_cell(row,kind);
         if(mask) {
-            if(n==32) return 0;
+            /* 64 slots cover every tile event a 14-row window can hold, so a
+             * packed level truncates nothing and only real I/O fails here. */
+            if(n==64) return 0;
             visible[n].row=(uint16_t)row; visible[n].columns=(uint8_t)mask;
             visible[n++].kind=(uint8_t)kind;
         }

@@ -1,5 +1,6 @@
 #include "walls.h"
 #include "level.h"
+#include "obstacle.h"
 #include "glass.h"
 #include "appearance.h"
 /* Fixed-size polygon cache plus disjoint color intervals; no pixel buffer. */
@@ -140,6 +141,30 @@ void walls_prepare(const Road *r,uint32_t camera) {
             /* Narrow dark seams make the five blocks read as a wall. */
             a.x++; d.x++; b.x--; c.x--;
             face(a,b,c,d,look->barrier_front);
+        }
+    }
+    /* Dynamic mechanisms take their pose from the same distance-driven phase
+     * the collision test uses; the cannon stays visible while the beam rests,
+     * so the warning window reads as "about to fire". Marker colors are fixed
+     * until skins catch up. */
+    for(i=0;r->level && i<(int)r->level->mech_count;i++) {
+        const LevelMech *mech=&r->level->mechs[i];
+        uint32_t z_ball=camera+r->depth_q8[ROAD_BALL_Y];
+        int z=(int)((uint32_t)mech->row*256u)-(int)camera;
+        int x;
+        if(z<320 || z>(int)r->depth_q8[0]+400) continue;
+        x=mech->column*256-r->camera_x_q8;
+        face_foreground=z<(int)r->depth_q8[ROAD_BALL_Y];
+        if(mech->kind==MECH_MOVER)
+            box(x-80+obstacle_mover_offset(mech,z_ball),z+48,160,160,0,512,
+                0xf81fu,0x9813u,0xffdfu);
+        else if(mech->kind==MECH_LASER) {
+            unsigned state=obstacle_laser_state(mech,z_ball);
+            box(x+56,z+56,144,144,0,320,0x7befu,0x39e7u,0x9cd3u);
+            if(state)
+                box(x+80,z-(int)mech->param,96,(int)mech->param+152,0,896,
+                    state==2u?0xf800u:0xfd20u,
+                    state==2u?0xb900u:0xa500u,0xffe0u);
         }
     }
 }

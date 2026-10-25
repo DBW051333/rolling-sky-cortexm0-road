@@ -152,7 +152,8 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
     uint32_t first=(camera+r->depth_q8[ROAD_HEIGHT-1])>>8;
     uint32_t last=(camera+r->depth_q8[0])>>8;
     uint32_t row,previous=0xffffffffu;
-    unsigned y,col,mask=31,pads=0,glass=0,shorts=0;
+    unsigned y,col,mask=31,pads=0,glass=0,shorts=0,gems=0,finish=0;
+    unsigned gem_masks[16];
     const Appearance *look=appearance_for(r->level,(camera+r->depth_q8[ROAD_BALL_Y])>>8);
     scene_bg=look->background;
     scene_background=look->backdrop?appearance_background():0;
@@ -172,6 +173,16 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
     (*(volatile uint32_t *)0x20001800)++;
 #endif
     for(col=0;col<ROAD_ROWS;col++) r->center_y[col]=-1;
+    /* Uncollected gems become per-row masks over the visible window; the
+     * window spans under 16 rows, matching the mask slot count. */
+    for(col=0;col<16;col++) gem_masks[col]=0;
+    if(r->level && last-first<16u) {
+        const LevelGem *list=r->level->gems;
+        unsigned i,total=r->level->gem_count;
+        for(i=0;i<total;i++)
+            if(!(r->gem_bits>>i&1u) && list[i].row>=first && list[i].row-first<16u)
+                gem_masks[list[i].row&15u]|=1u<<list[i].column;
+    }
     if(points || r->level) for(row=first;row<=last;row++) {
         int depth=(int)((row<<8)+128-camera);
         if(depth>0) {
@@ -190,6 +201,8 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
             pads=r->level?level_tiles(r->level,row,TILE_JUMP):0;
             shorts=r->level?level_tiles(r->level,row,TILE_SHORT_JUMP):0;
             glass=r->level?level_tiles(r->level,row,TILE_FRAGILE):0;
+            gems=r->level?gem_masks[row&15u]:0;
+            finish=r->level && row==r->level->row_count;
         }
         middle=r->center_y[row&(ROAD_ROWS-1)]; horizontal=row!=previous;
         wall_active=(unsigned)walls_line(y); wall_cursor=0;
@@ -202,7 +215,9 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
             if(pads&(1u<<col)) color=look->pad;
             if(shorts&(1u<<col)) color=look->short_pad;
             if(glass&(1u<<col)) color=look->fragile;
-            if(!(mask&(1u<<col))) segment(s,x,right,scene_bg,y);
+            if(gems&(1u<<col)) color=ROAD_GEM_CELL;
+            if(finish) segment(s,x,right,(col&1u)?ROAD_FINISH_A:ROAD_FINISH_B,y);
+            else if(!(mask&(1u<<col))) segment(s,x,right,scene_bg,y);
             else if(horizontal) segment(s,x,right,(glass&(1u<<col))?look->fragile_edge:grid,y);
             else {
                 segment(s,x,x+1,(glass&(1u<<col))?look->fragile_edge:grid,y);
@@ -211,6 +226,13 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
                     segment(s,x+1,center-1,color,y);
                     segment(s,center-1,center+1,((pads|shorts)&(1u<<col))?0xffffu:ROAD_POINT,y);
                     segment(s,center+1,right,color,y);
+                } else if((gems&(1u<<col)) && middle>=0 && (int)y>=middle-2 && (int)y<=middle+2) {
+                    /* Small diamond marker: widths 1/3/5 around the row middle. */
+                    int center=projected_x((int)(col*256+128)-(int)r->camera_x_q8,scale);
+                    int dy=(int)y-middle,half=2-(dy<0?-dy:dy);
+                    segment(s,x+1,center-half,color,y);
+                    segment(s,center-half,center+half+1,ROAD_GEM_CORE,y);
+                    segment(s,center+half+1,right,color,y);
                 } else segment(s,x+1,right,color,y);
             }
             x=right;

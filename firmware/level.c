@@ -12,7 +12,12 @@ static const TileEvent first_tiles[]={
     {35,2,TILE_JUMP}, {37,31,TILE_LOW_BARRIER},
     {51,16,TILE_JUMP}, {53,31,TILE_LOW_BARRIER}
 };
-const Level level_one={first_ground,first_tiles,72,3,7,1};
+/* ROM fallback gems mirror the SD pack placements; mechanisms stay an SD-only
+ * showcase until the fallback needs them. */
+static const LevelGem first_gems[]={
+    {4,2},{12,2},{25,2},{33,2},{43,2},{57,2},{66,2},{70,2}
+};
+const Level level_one={first_ground,first_tiles,72,3,7,1,first_gems,0,8,0};
 /* Same object rules, different lanes and rhythm. Each jump pad has its own
  * wall two rows ahead, with solid landing space before the next gap. */
 static const GroundRun second_ground[]={
@@ -25,7 +30,10 @@ static const TileEvent second_tiles[]={
     {47,8,TILE_JUMP}, {49,31,TILE_LOW_BARRIER},
     {63,2,TILE_JUMP}, {65,31,TILE_LOW_BARRIER}
 };
-static const Level level_two={second_ground,second_tiles,80,4,9,2};
+static const LevelGem second_gems[]={
+    {4,2},{21,2},{37,2},{53,2},{69,2},{77,2}
+};
+const Level level_two={second_ground,second_tiles,80,4,9,2,second_gems,0,6,0};
 #include "hills_level.h"
 const Level *const levels[LEVEL_COUNT]={&level_one,&level_two,&hills_level};
 /* Logical vertical position in fixed Q8 units, independent of artwork. */
@@ -68,6 +76,8 @@ void level_load(Road *road,const Level *level,uint32_t *camera) {
     road->forward_remainder=0;
     road->jump_ms=0; road->jump_row=0xffffu; road->jump_total=ROAD_JUMP_MS;
     road->death_ms=0; road->death_kind=0;
+    road->gem_bits=0; road->gems_got=0;
+    road->gem_cursor=0; road->mech_cursor=0;
     *camera=0;
 }
 unsigned level_step(Road *road,uint32_t *camera,int direction,uint32_t ms) {
@@ -107,6 +117,22 @@ unsigned level_step(Road *road,uint32_t *camera,int direction,uint32_t ms) {
             }
         }
         glass_update(road,z);
+        /* Gems are picked up by passing through the cell, grounded or airborne,
+         * with a wider lateral window than the pads to feel generous. */
+        {
+            const LevelGem *gems=road->level->gems;
+            unsigned total=road->level->gem_count,i;
+            unsigned row=z>>8;
+            while(road->gem_cursor<total && gems[road->gem_cursor].row<row)
+                road->gem_cursor++;
+            for(i=road->gem_cursor;i<total && gems[i].row==row;i++) {
+                int32_t dx;
+                if(road->gem_bits>>i&1u) continue;
+                dx=road->camera_x_q8-(int32_t)(gems[i].column*256+128);
+                if(dx<0) dx=-dx;
+                if(dx<=96) { road->gem_bits|=1u<<i; road->gems_got++; }
+            }
+        }
         height=level_jump_height_q8(road);
         {
             int32_t x=road->camera_x_q8;
@@ -127,6 +153,25 @@ unsigned level_step(Road *road,uint32_t *camera,int direction,uint32_t ms) {
                            obstacle_hits_ball(&volume,x,z,height)) return GAME_HIT;
                     }
                 }
+            }
+        }
+        /* Mechanisms: sparse rows, so a cursor plus a small forward window
+         * keeps the per-step cost proportional to active mechanisms only. */
+        {
+            const LevelMech *mechs=road->level->mechs;
+            unsigned total=road->level->mech_count,i;
+            uint32_t base;
+            while(road->mech_cursor<total &&
+                  (uint32_t)mechs[road->mech_cursor].row*256u+1152u<z)
+                road->mech_cursor++;
+            for(i=road->mech_cursor;i<total;i++) {
+                ObstacleVolume volume;
+                base=(uint32_t)mechs[i].row*256u;
+                if(base>z+1280u) break; /* sorted: nothing else is near yet */
+                if(base+640u<z) continue;
+                if(obstacle_mech_volume(&mechs[i],z,&volume) &&
+                   obstacle_hits_ball(&volume,road->camera_x_q8,z,height))
+                    return GAME_HIT;
             }
         }
         if(!road->jump_ms) {

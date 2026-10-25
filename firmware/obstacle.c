@@ -57,3 +57,54 @@ int obstacle_hits_ball(const ObstacleVolume *volume,int32_t x_q8,
                             (int32_t)volume->z_max_q8);
     return dx*dx+dy*dy+dz*dz<=radius*radius;
 }
+
+/* Mechanism phases advance with travelled distance, not wall-clock time. The
+ * unsigned subtraction wraps only for lasers still far ahead, whose masked
+ * phase is then arbitrary but harmless: the window checks in level_step keep
+ * untested mechanisms out of reach until they matter. */
+static uint32_t mech_phase(const LevelMech *mech,uint32_t z) {
+    return (z-(uint32_t)mech->row*256u+mech->phase)&((256u<<mech->period_shift)-1u);
+}
+
+unsigned obstacle_laser_state(const LevelMech *mech,uint32_t z) {
+    uint32_t period=256u<<mech->period_shift,half=period>>1;
+    uint32_t phase=mech_phase(mech,z);
+    if(phase>=half) return 2u;              /* firing */
+    if(phase>=half-(period>>4)) return 1u;  /* warning window before firing */
+    return 0u;                              /* safe */
+}
+
+int obstacle_mover_offset(const LevelMech *mech,uint32_t z) {
+    uint32_t period=256u<<mech->period_shift,quarter=period>>2;
+    uint32_t phase=mech_phase(mech,z),position;
+    position=phase<(period>>1)?phase:period-phase;
+    return (int)((((int32_t)position-(int32_t)quarter)*(int32_t)mech->param)>>
+                 (mech->period_shift+6));
+}
+
+int obstacle_mech_volume(const LevelMech *mech,uint32_t z,ObstacleVolume *volume) {
+    if(!volume) return 0;
+    volume->shape=OBSTACLE_SHAPE_BOX;
+    volume->behavior=OBSTACLE_BEHAVIOR_TIMED;
+    volume->kind=mech->kind;
+    if(mech->kind==MECH_MOVER) {
+        int center=mech->column*256+128+obstacle_mover_offset(mech,z);
+        volume->x_min_q8=center-80;
+        volume->x_max_q8=center+80;
+        volume->z_min_q8=(uint32_t)mech->row*256u+48u;
+        volume->z_max_q8=(uint32_t)mech->row*256u+208u;
+        volume->bottom_q8=0;
+        volume->top_q8=COLLISION_GROUND_TOP_Q8; /* low enough to jump over */
+        return 1;
+    }
+    if(mech->kind!=MECH_LASER || obstacle_laser_state(mech,z)!=2u) return 0;
+    volume->x_min_q8=mech->column*256+48;
+    volume->x_max_q8=mech->column*256+208;
+    /* The beam reaches back toward the approaching player and covers the
+     * cannon cell; full height, so the only answers are timing or a lane. */
+    volume->z_min_q8=(uint32_t)mech->row*256u-(uint32_t)mech->param;
+    volume->z_max_q8=(uint32_t)mech->row*256u+208u;
+    volume->bottom_q8=0;
+    volume->top_q8=COLLISION_AIR_TOP_Q8;
+    return 1;
+}

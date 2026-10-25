@@ -17,12 +17,29 @@ typedef struct {
     uint16_t row;
     uint8_t columns,kind;
 } TileEvent;
+/* Collectibles and dynamic mechanisms are sparse, sorted by row, and live in
+ * side tables instead of per-row masks. Gems may float over gaps; mechanisms
+ * keep reusing the shared ObstacleVolume collision with a time-varying pose. */
+typedef struct {
+    uint16_t row;
+    uint8_t column;
+} LevelGem;
+enum { MECH_LASER=1, MECH_MOVER=2 };
+typedef struct LevelMech {
+    uint16_t row;
+    uint8_t column,kind;
+    uint8_t period_shift; /* period = 256 << period_shift Q8 units of travel */
+    uint16_t phase,param; /* laser: beam reach toward the player; mover: amplitude */
+} LevelMech;
 typedef struct Level {
     const GroundRun *ground;
     const TileEvent *tiles;
     uint16_t row_count;
     uint8_t ground_count,tile_count;
     uint16_t id;
+    const LevelGem *gems;
+    const LevelMech *mechs;
+    uint8_t gem_count,mech_count;
 } Level;
 enum { GAME_RUNNING, GAME_FELL, GAME_CLEAR, GAME_HIT };
 extern const Level level_one;

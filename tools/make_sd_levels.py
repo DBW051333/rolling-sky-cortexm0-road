@@ -2,6 +2,10 @@
 
 Usage: python tools/make_sd_levels.py [levels/levels.json] [sd_payload/RSLEVELS.BIN]
 Only creates the named output file; never formats or accesses a physical disk.
+
+V4 keeps the V3 8-byte rows and appends two sparse per-level side tables after
+the row data: gems (3 B entries) and mechanisms (9 B entries). The header gains
+a per-level extension directory at byte 256 (gem/mech sector offsets, 0=none).
 """
 import json
 import struct
@@ -15,11 +19,22 @@ levels = json.loads(source.read_text(encoding='utf-8'))['levels']
 if not 1 <= len(levels) <= 24:
     raise ValueError('The current card catalog supports 1..24 levels')
 header = bytearray(512)
-header[:8] = b'RSLEVEL3'
+header[:8] = b'RSLEVEL4'
 struct.pack_into('<HH', header, 8, len(levels), 8)
 chunks = []
 offset = 1
 used_ids = set()
+GEM_MAX, MECH_MAX = 32, 24
+PERIODS = {1024: 2, 2048: 3, 4096: 4, 8192: 5}
+KINDS = {'laser': 1, 'mover': 2}
+
+
+def padded(blob):
+    blob += bytes((-len(blob)) % 512)
+    chunks.append(blob)
+    return offset, len(blob) // 512
+
+
 for index, level in enumerate(levels):
     n = level['rows']
     if not isinstance(n, int) or not 16 <= n <= 65535:
@@ -55,10 +70,53 @@ for index, level in enumerate(levels):
         raise ValueError('Glass cannot overlap another collision type in this version')
     if any(rows[r * stride + 1] & rows[r * stride + 6] for r in range(n)):
         raise ValueError('Normal and short jump triggers cannot overlap')
+
+    # Gems: sparse pickups, no support requirement (they may float over gaps or
+    # ride glass); only true blockers make a gem unfair to reach for.
+    gems = sorted(([g[0], g[1]] for g in level.get('gems', [])), key=lambda g: (g[0], g[1]))
+    if len(gems) > GEM_MAX:
+        raise ValueError(f'A level supports at most {GEM_MAX} gems')
+    for row, lane in gems:
+        if not 0 <= row < n or not 1 <= lane <= 5:
+            raise ValueError('Gems need a row inside the level and lane 1..5')
+        bit = 1 << (lane - 1)
+        if rows[row * stride + 2] & bit or rows[row * stride + 4] & bit or rows[row * stride + 7] & bit:
+            raise ValueError(f'Gem at row {row} lane {lane} sits inside a blocker')
+
+    # Mechanisms: distance-driven pose, so period/phase are Q8 travel units.
+    # The base cell must be clean, supported ground like other rooted objects.
+    mechs = []
+    for m in level.get('mechs', []):
+        row, lane, kind, period, phase, param = m
+        if isinstance(kind, str):
+            kind = KINDS.get(kind)
+        if not 0 <= row < n or not 1 <= lane <= 5 or kind not in (1, 2):
+            raise ValueError('Mechanisms need a row inside the level, lane 1..5 and laser/mover')
+        if period not in PERIODS:
+            raise ValueError('Mechanism period must be a power of two in 1024..8192')
+        if not 0 <= phase < period:
+            raise ValueError('Mechanism phase must be below the period')
+        limit = 640 if kind == 1 else 512
+        if not 0 < param <= limit:
+            raise ValueError(f'Mechanism param must be 1..{limit} for this kind')
+        mechs.append([row, lane, kind, period, phase, param])
+    mechs.sort(key=lambda m: (m[0], m[1]))
+    if len(mechs) > MECH_MAX:
+        raise ValueError(f'A level supports at most {MECH_MAX} mechanisms')
+    for row, lane, kind, period, phase, param in mechs:
+        bit = 1 << (lane - 1)
+        if not rows[row * stride] & bit:
+            raise ValueError(f'Mechanism at row {row} lacks ground support')
+        if any(rows[row * stride + k] & bit for k in range(1, 8)):
+            raise ValueError(f'Mechanism at row {row} lane {lane} overlaps a tile event')
+
     # Conservative face budget for every possible 16-row visible window.
+    mech_costs = [0] * n
+    for row, lane, kind, period, phase, param in mechs:
+        mech_costs[row] += 6 if kind == 1 else 3
     solid_costs = [rows[r * stride + 2].bit_count() * 3 + rows[r * stride + 4].bit_count() * 9 + (rows[r * stride + 5] & ~(rows[r * stride + 5] << 1) & 31).bit_count() * 3 + rows[r * stride + 7].bit_count() * 4 for r in range(n)]
     glass_costs = [rows[r * stride + 3].bit_count() for r in range(n)]
-    if any(sum(solid_costs[r:r + 16]) + min(12, sum(glass_costs[r:r + 16])) > 32 for r in range(n)):
+    if any(sum(solid_costs[r:r + 16]) + sum(mech_costs[r:r + 16]) + min(12, sum(glass_costs[r:r + 16])) > 32 for r in range(n)):
         raise ValueError('Visible object faces exceed the 32-face cache')
     wall_rows = sorted(wall_rows)
     if any(b - a < 16 for a, b in zip(wall_rows, wall_rows[1:])):
@@ -87,10 +145,23 @@ for index, level in enumerate(levels):
         if action in ('jump', 'short') and not rows[row * stride + (1 if action == 'jump' else 6)] & safe:
             raise ValueError(f'Gate at row {row} is missing its jump trigger')
     struct.pack_into('<II', header, 16 + index * 8, n, offset)
-    padded = rows + bytes((-len(rows)) % 512)
-    chunks.append(padded)
-    offset += len(padded) // 512
-    print(f'{index + 1:02d} {level["name"]}: {n} rows, {len(padded)} bytes')
+    rows_offset, rows_sectors = padded(rows)
+    offset += rows_sectors
+    gem_sector = mech_sector = 0
+    if gems:
+        blob = bytearray(struct.pack('<H', len(gems)))
+        for row, lane in gems:
+            blob += struct.pack('<HB', row, lane - 1)
+        gem_sector, _ = padded(blob)
+        offset += len(chunks[-1]) // 512
+    if mechs:
+        blob = bytearray(struct.pack('<H', len(mechs)))
+        for row, lane, kind, period, phase, param in mechs:
+            blob += struct.pack('<HBBBHH', row, lane - 1, kind, PERIODS[period], phase, param)
+        mech_sector, _ = padded(blob)
+        offset += len(chunks[-1]) // 512
+    struct.pack_into('<II', header, 256 + index * 8, gem_sector, mech_sector)
+    print(f'{index + 1:02d} {level["name"]}: {n} rows, {len(gems)} gems, {len(mechs)} mechanisms')
 target.parent.mkdir(parents=True, exist_ok=True)
 target.write_bytes(header + b''.join(chunks))
 print(f'Created {target} ({target.stat().st_size} bytes)')

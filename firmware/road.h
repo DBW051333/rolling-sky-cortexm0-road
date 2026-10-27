@@ -41,7 +41,6 @@ typedef struct {
     uint16_t scale_q8[ROAD_HEIGHT];
     int16_t center_y[ROAD_ROWS];
     uint16_t camera_x_q8;
-    uint8_t pan_remainder;
     uint8_t forward_remainder;
     const struct Level *level;
     uint16_t jump_ms,jump_row,jump_total;

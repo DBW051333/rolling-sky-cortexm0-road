@@ -26,7 +26,7 @@ offset = 1
 used_ids = set()
 GEM_MAX, MECH_MAX = 32, 24
 PERIODS = {1024: 2, 2048: 3, 4096: 4, 8192: 5}
-KINDS = {'laser': 1, 'mover': 2}
+KINDS = {'laser': 1, 'mover': 2, 'hammer': 3}
 
 
 def padded(blob):
@@ -90,15 +90,19 @@ for index, level in enumerate(levels):
         row, lane, kind, period, phase, param = m
         if isinstance(kind, str):
             kind = KINDS.get(kind)
-        if not 0 <= row < n or not 1 <= lane <= 5 or kind not in (1, 2):
-            raise ValueError('Mechanisms need a row inside the level, lane 1..5 and laser/mover')
+        if not 0 <= row < n or not 1 <= lane <= 5 or kind not in (1, 2, 3):
+            raise ValueError('Mechanisms need a row inside the level, lane 1..5 and laser/mover/hammer')
         if period not in PERIODS:
             raise ValueError('Mechanism period must be a power of two in 1024..8192')
         if not 0 <= phase < period:
             raise ValueError('Mechanism phase must be below the period')
-        limit = 640 if kind == 1 else 512
-        if not 0 < param <= limit:
-            raise ValueError(f'Mechanism param must be 1..{limit} for this kind')
+        if kind == 3:
+            if not 256 <= param <= 680:
+                raise ValueError('Hammer param (head height) must be 256..680')
+        else:
+            limit = 640 if kind == 1 else 512
+            if not 0 < param <= limit:
+                raise ValueError(f'Mechanism param must be 1..{limit} for this kind')
         mechs.append([row, lane, kind, period, phase, param])
     mechs.sort(key=lambda m: (m[0], m[1]))
     if len(mechs) > MECH_MAX:
@@ -113,7 +117,7 @@ for index, level in enumerate(levels):
     # Conservative face budget for every possible 16-row visible window.
     mech_costs = [0] * n
     for row, lane, kind, period, phase, param in mechs:
-        mech_costs[row] += 6 if kind == 1 else 3
+        mech_costs[row] += 6 if kind in (1, 3) else 3
     solid_costs = [rows[r * stride + 2].bit_count() * 3 + rows[r * stride + 4].bit_count() * 9 + (rows[r * stride + 5] & ~(rows[r * stride + 5] << 1) & 31).bit_count() * 3 + rows[r * stride + 7].bit_count() * 4 for r in range(n)]
     glass_costs = [rows[r * stride + 3].bit_count() for r in range(n)]
     if any(sum(solid_costs[r:r + 16]) + sum(mech_costs[r:r + 16]) + min(12, sum(glass_costs[r:r + 16])) > 32 for r in range(n)):

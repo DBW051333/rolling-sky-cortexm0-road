@@ -35,6 +35,7 @@ int obstacle_hits_ball(const ObstacleVolume *volume,int32_t x_q8,
 struct LevelMech;
 unsigned obstacle_laser_state(const struct LevelMech *mech,uint32_t z);
 int obstacle_mover_offset(const struct LevelMech *mech,uint32_t z);
+unsigned obstacle_hammer_stage(const struct LevelMech *mech,uint32_t z);
 int obstacle_mech_volume(const struct LevelMech *mech,uint32_t z,
                          ObstacleVolume *volume);
 

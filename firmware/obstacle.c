@@ -82,6 +82,12 @@ int obstacle_mover_offset(const LevelMech *mech,uint32_t z) {
                  (mech->period_shift+6));
 }
 
+/* Hammer stages map 0..3 to band indices left/middle/right/middle. */
+unsigned obstacle_hammer_stage(const LevelMech *mech,uint32_t z) {
+    unsigned stage=mech_phase(mech,z)>>(mech->period_shift+6u);
+    return stage==2u?2u:(stage?1u:0u);
+}
+
 int obstacle_mech_volume(const LevelMech *mech,uint32_t z,ObstacleVolume *volume) {
     if(!volume) return 0;
     volume->shape=OBSTACLE_SHAPE_BOX;
@@ -95,6 +101,19 @@ int obstacle_mech_volume(const LevelMech *mech,uint32_t z,ObstacleVolume *volume
         volume->z_max_q8=(uint32_t)mech->row*256u+208u;
         volume->bottom_q8=0;
         volume->top_q8=COLLISION_GROUND_TOP_Q8; /* low enough to jump over */
+        return 1;
+    }
+    if(mech->kind==MECH_HAMMER) {
+        /* Discrete swing approximation: quarter-period stages sweep
+         * left -> middle -> right -> middle, each a fixed column band. */
+        static const int16_t bounds[3][2]={{24,488},{560,720},{792,1256}};
+        unsigned index=obstacle_hammer_stage(mech,z);
+        volume->x_min_q8=bounds[index][0];
+        volume->x_max_q8=bounds[index][1];
+        volume->z_min_q8=(uint32_t)mech->row*256u+48u;
+        volume->z_max_q8=(uint32_t)mech->row*256u+208u;
+        volume->bottom_q8=0;
+        volume->top_q8=mech->param; /* head height; the peak jump clears it */
         return 1;
     }
     if(mech->kind!=MECH_LASER || obstacle_laser_state(mech,z)!=2u) return 0;

@@ -231,10 +231,11 @@ static int load_tables(unsigned index) {
         for(i=0;i<total;i++) {
             const uint8_t *p=sector+2+i*9;
             unsigned row=le16(p),kind=p[3],shift=p[4],param;
-            if(row>=sd_level.row_count || p[2]>=5 || kind<1 || kind>2 ||
+            if(row>=sd_level.row_count || p[2]>=5 || kind<1 || kind>3 ||
                shift<2 || shift>5 || le16(p+5)>=(256u<<shift)) return 0;
             param=le16(p+7);
-            if(param>(kind==MECH_LASER?640u:512u)) return 0;
+            if(kind==MECH_HAMMER ? (param<256u || param>680u)
+               : param>(kind==MECH_LASER?640u:512u)) return 0;
             if(i && row<sd_mechs[i-1].row) return 0;
             sd_mechs[i].row=(uint16_t)row;
             sd_mechs[i].column=p[2];

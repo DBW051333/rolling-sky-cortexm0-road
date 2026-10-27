@@ -24,7 +24,7 @@ typedef struct {
     uint16_t row;
     uint8_t column;
 } LevelGem;
-enum { MECH_LASER=1, MECH_MOVER=2 };
+enum { MECH_LASER=1, MECH_MOVER=2, MECH_HAMMER=3 };
 typedef struct LevelMech {
     uint16_t row;
     uint8_t column,kind;

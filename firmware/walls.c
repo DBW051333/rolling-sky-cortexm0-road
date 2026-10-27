@@ -158,6 +158,19 @@ void walls_prepare(const Road *r,uint32_t camera) {
         if(mech->kind==MECH_MOVER)
             box(x-80+obstacle_mover_offset(mech,z_ball),z+48,160,160,0,512,
                 0xf81fu,0x9813u,0xffdfu);
+        else if(mech->kind==MECH_HAMMER) {
+            static const int16_t bounds[3][2]={{24,488},{560,720},{792,1256}};
+            /* Bands are absolute road coordinates; the nominal column is
+             * unused for a hammer sweeping the whole track. */
+            int base=-r->camera_x_q8;
+            unsigned index=obstacle_hammer_stage(mech,z_ball);
+            int left=bounds[index][0],right=bounds[index][1];
+            int center=left+(right-left)/2,top=mech->param;
+            /* Head box plus a thin arm rising to the swing pivot. */
+            box(base+left,z+64,right-left,128,0,top,0xffe0u,0xd29bu,0xffffu);
+            face(project(base+center-12,z+128,960),project(base+center+12,z+128,960),
+                 project(base+center+12,z+128,top),project(base+center-12,z+128,top),0x7befu);
+        }
         else if(mech->kind==MECH_LASER) {
             unsigned state=obstacle_laser_state(mech,z_ball);
             box(x+56,z+56,144,144,0,320,0x7befu,0x39e7u,0x9cd3u);

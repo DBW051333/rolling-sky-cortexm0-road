@@ -28,7 +28,7 @@ void road_init(Road *r) {
         r->depth_q8[i]=(uint16_t)divide((19552-20*i)*256,1248+12*i);
         r->scale_q8[i]=(uint16_t)divide((1248+12*i)*256,52);
     }
-    r->camera_x_q8=ROAD_CAMERA_CENTER; r->pan_remainder=0; r->forward_remainder=0;
+    r->camera_x_q8=ROAD_CAMERA_CENTER; r->forward_remainder=0;
     r->level=0;
     r->jump_ms=0; r->jump_row=0xffffu; r->jump_total=ROAD_JUMP_MS;
     r->death_ms=0; r->death_kind=0;
@@ -40,7 +40,7 @@ uint32_t road_forward(Road *r,uint32_t ms) {
 }
 void road_pan(Road *r,int direction,uint32_t ms) {
     int next;
-    if(!direction) { r->pan_remainder=0; return; }
+    if(!direction) return;
     if(ms>200) ms=200; /* Avoid a large jump after a pause/debug stall. */
     next=r->camera_x_q8+(direction<0?-(int)(ms*2u):(int)(ms*2u));
     if(next<ROAD_CAMERA_MIN) next=ROAD_CAMERA_MIN;

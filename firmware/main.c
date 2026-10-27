@@ -117,6 +117,14 @@ static void menu_card(unsigned x,unsigned y,unsigned w,unsigned h,int front) {
 static int menu_hills(unsigned index,unsigned card) {
     return (card?sd_levels_id(index):levels[index]->id)==4;
 }
+/* Session bests live in RAM only; the board offers no persistent storage. */
+static uint8_t best_pct[24],best_gems[24];
+static uint8_t scored;
+static const uint8_t hud_pct_rows[5]={5,1,2,4,5};
+static void hud_digit(unsigned x,unsigned y,unsigned digit);
+static void hud_glyph(unsigned x,unsigned y,const uint8_t *rows,uint16_t on,uint16_t off);
+static void hud_gem_icon(unsigned x,unsigned y);
+static unsigned hud_tens(unsigned v);
 static void draw_title(void) {
     unsigned i,x=(240-TITLE_WIDTH)/2;
     wait_span(); window(x,18,TITLE_WIDTH,TITLE_HEIGHT);
@@ -151,6 +159,22 @@ static void draw_menu(unsigned selected,unsigned card,unsigned error) {
     menu_card(54,150,132,132,1);
     if(menu_hills(selected,card)) text(62,198,"HILLS",4,0xffff);
     else menu_number(78,186,selected+1,7,0xffff);
+    /* Session bests in the front card corners: progress top-right, gems
+     * bottom-center; hidden until the level has been played once. */
+    if(best_pct[selected]) {
+        unsigned p=best_pct[selected];
+        fill(148,154,34,13,0x1b18u);
+        hud_digit(153,156,hud_tens(p));
+        hud_digit(160,156,p-hud_tens(p)*10u);
+        hud_glyph(167,156,hud_pct_rows,0xffe0u,0x1b18u);
+    }
+    if(best_gems[selected]) {
+        unsigned g=best_gems[selected];
+        fill(94,262,52,13,0x1b18u);
+        hud_gem_icon(99,264);
+        hud_digit(110,264,hud_tens(g));
+        hud_digit(117,264,g-hud_tens(g)*10u);
+    }
     text(card?208:196,299,card?"SD":"ROM",2,error?0xf800u:card?0x07e0u:0xffffu);
 }
 static int start_level(unsigned selected,unsigned card,Road *r,uint32_t *camera) {
@@ -172,30 +196,51 @@ static const uint8_t hud_digits[10][5]={
     {7,5,5,5,7},{2,6,2,2,7},{7,1,7,4,7},{7,1,7,1,7},{5,5,7,1,1},
     {7,4,7,1,7},{7,4,7,5,7},{7,1,1,1,1},{7,5,7,5,7},{7,5,7,1,7}
 };
-static void hud_digit(unsigned x,unsigned y,unsigned digit) {
+#define HUD_PCT_GLYPH {5,1,2,4,5}
+/* Comparison ladders: -Oz rewrites subtract loops back into EABI division
+ * calls, and this image links without those helpers. */
+static unsigned hud_tens(unsigned v) {
+    if(v>=90) return 9; if(v>=80) return 8; if(v>=70) return 7; if(v>=60) return 6;
+    if(v>=50) return 5; if(v>=40) return 4; if(v>=30) return 3; if(v>=20) return 2;
+    return v>=10?1u:0u;
+}
+static void hud_glyph(unsigned x,unsigned y,const uint8_t *rows,uint16_t on,uint16_t off) {
     unsigned row;
     for(row=0;row<5;row++) {
-        unsigned bits=hud_digits[digit][row],col;
+        unsigned bits=rows[row],col;
         wait_span(); window(x,y+row*2,6,2);
         for(col=0;col<3;col++)
-            span(2,(bits>>(2-col))&1u?0xffffu:0x0000u,0);
+            span(2,(bits>>(2-col))&1u?on:off,0);
+    }
+    wait_span();
+}
+static void hud_digit(unsigned x,unsigned y,unsigned digit) {
+    hud_glyph(x,y,hud_digits[digit],0xffffu,0x0000u);
+}
+static void hud_number(unsigned x,unsigned y,unsigned v) {
+    unsigned tens=hud_tens(v);
+    hud_digit(x,y,tens);
+    hud_digit(x+7,y,v-tens*10u);
+}
+static void hud_gem_icon(unsigned x,unsigned y) {
+    static const uint8_t widths[5]={1,3,5,3,1};
+    unsigned row;
+    for(row=0;row<5;row++) {
+        wait_span(); window(x+(5-widths[row])/2,y+row*2,widths[row],2);
+        span(widths[row],0x07ffu,0);
     }
     wait_span();
 }
 static void hud_counter(unsigned gems) {
-    static const uint8_t widths[5]={1,3,5,3,1};
-    unsigned row,tens=0;
     fill(3,4,28,16,0x0000u);
-    for(row=0;row<5;row++) {
-        wait_span(); window(7+(5-widths[row])/2,5+row*2,widths[row],2);
-        span(widths[row],0x07ffu,0);
-    }
-    /* Comparison ladder: -Oz rewrites a subtract loop back into a division
-     * call, and the image links without the EABI division helpers. */
-    tens=gems>=20?2u:gems>=10?1u:0u;
-    gems-=tens*10u;
-    hud_digit(16,5,tens);
-    hud_digit(23,5,gems);
+    hud_gem_icon(6,5);
+    hud_number(16,5,gems);
+}
+static unsigned hud_pct(const Road *r,uint32_t camera) {
+    uint32_t z=camera+r->depth_q8[ROAD_BALL_Y];
+    uint32_t total=(uint32_t)r->level->row_count*256u;
+    unsigned pct=total?(unsigned)hud_divide(z*100u,total):0u;
+    return pct>100?100u:pct;
 }
 static void hud_draw(const Road *r,uint32_t camera) {
     uint32_t z=camera+r->depth_q8[ROAD_BALL_Y];
@@ -206,6 +251,19 @@ static void hud_draw(const Road *r,uint32_t camera) {
     if(done) span(done,0xffe0u,0);
     if(done<ROAD_WIDTH) span(ROAD_WIDTH-done,0x18e3u,0);
     hud_counter(r->gems_got);
+}
+/* Death/clear readout: gems reached and percentage, the feedback the
+ * original shows on its result screen. */
+static void hud_result(const Road *r,uint32_t camera) {
+    static const uint8_t pct[5]=HUD_PCT_GLYPH;
+    unsigned value=hud_pct(r,camera),x;
+    fill(84,6,72,14,0x0000u);
+    hud_gem_icon(88,8);
+    hud_number(97,8,r->gems_got);
+    x=118;
+    if(value>=100) { hud_digit(x,8,1); hud_digit(x+7,8,0); hud_digit(x+14,8,0); x+=21; }
+    else { hud_number(x,8,value); x+=14; }
+    hud_glyph(x,8,pct,0xffe0u,0x0000u);
 }
 static void lcd_init(void) {
     static const uint8_t config[]={
@@ -293,7 +351,7 @@ int main(void) {
                     card_count=0; sd_error=1; selected=0; menu_dirty=1;
                     continue;
                 }
-                state=GAME_RUNNING; paused=0; menu=0;
+                state=GAME_RUNNING; paused=0; menu=0; scored=0;
                 last_time=frame_start=milliseconds; keys=0;
             } else {
                 if(menu_dirty) {
@@ -313,7 +371,7 @@ int main(void) {
                 menu=1; menu_dirty=1; card_count=0; sd_error=1; selected=0;
                 continue;
             }
-            state=GAME_RUNNING; paused=0; last_time=frame_start;
+            state=GAME_RUNNING; paused=0; scored=0; last_time=frame_start;
         }
         {
             unsigned held=KEY_HELD;
@@ -335,7 +393,21 @@ int main(void) {
         }
         road_draw(&road,camera,points,&sink); wait_span();
         hud_draw(&road,camera);
+        if(paused && state==GAME_RUNNING) {
+            fill(111,8,5,12,0xffffu);
+            fill(124,8,5,12,0xffffu);
+        }
         if(state!=GAME_RUNNING) {
+            if(!scored) {
+                unsigned pct=hud_pct(&road,camera);
+                if(pct>99u) pct=99u;
+                scored=1;
+                if(selected<24u) {
+                    if(pct>best_pct[selected]) best_pct[selected]=(uint8_t)pct;
+                    if(road.gems_got>best_gems[selected]) best_gems[selected]=road.gems_got;
+                }
+            }
+            hud_result(&road,camera);
             window(0,0,ROAD_WIDTH,4);
             span(ROAD_WIDTH*4,state==GAME_CLEAR?0x07e0:0xf800,0);
             wait_span();

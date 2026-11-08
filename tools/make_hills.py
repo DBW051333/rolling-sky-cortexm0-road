@@ -16,6 +16,9 @@ def chain(nodes,exit_end):
   path(row,row+1,lane);gate(row,lane,'jump' if i+1<len(nodes) else 'ground')
   if i+1<len(nodes):
    event(row,lane,1);next_row,next_lane=nodes[i+1];void(row+1,next_row,next_lane)
+   # The pad flight spans four rows from pad contact, so the landing row is
+   # pad+4: keep a full-width strip there or every hop dies one row short.
+   ground[row+4]=31
  path(nodes[-1][0],exit_end,nodes[-1][1])
 # 1. Ground route: single-column gates, with roomy transition strips.
 path(8,12,2)

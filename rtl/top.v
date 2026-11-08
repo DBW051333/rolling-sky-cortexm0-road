@@ -4,6 +4,7 @@ module top(
     input [3:0] col,
     output [3:0] row,
     output uart_tx,LCD_CS,LCD_RS,LCD_WR,LCD_RD,LCD_RST,LCD_BL_CTR,
+    output audio_pwm,
     input SD_MISO,
     output SD_CLK,SD_CS,SD_MOSI,
     output [15:0] LCD_DATA
@@ -19,5 +20,6 @@ module top(
         .col(col),.row(row),.uart_rx(uart_rx),.uart_tx(uart_tx),
         .SD_CLK(SD_CLK),.SD_CS(SD_CS),.SD_MOSI(SD_MOSI),.SD_MISO(SD_MISO),
         .LCD_CS(LCD_CS),.LCD_RS(LCD_RS),.LCD_WR(LCD_WR),.LCD_RD(LCD_RD),
-        .LCD_RST(LCD_RST),.LCD_BL_CTR(LCD_BL_CTR),.LCD_DATA(LCD_DATA));
+        .LCD_RST(LCD_RST),.LCD_BL_CTR(LCD_BL_CTR),.LCD_DATA(LCD_DATA),
+        .audio_pwm(audio_pwm));
 endmodule

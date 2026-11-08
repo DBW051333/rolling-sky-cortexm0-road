@@ -19,6 +19,7 @@ module CortexM0_SoC #(parameter CODE_FILE = "../firmware/code.hex") (
         output      wire    [15:0]  LCD_DATA,
         output wire SD_CLK,SD_CS,SD_MOSI,
         input wire SD_MISO,
+        output wire audio_pwm,
         output      wire            LCD_BL_CTR
               
 );
@@ -365,13 +366,20 @@ AHBlite_Block_RAM #(.ADDR_WIDTH(11)) RAMDATA_Interface(
 wire [15:0] key_data;
 wire [15:0] key_held;
 wire        key_clear;
+wire [95:0] adc_levels;
+
+/* Slide potentiometer on header P2. The converter owns its pins directly, so
+ * no top-level port or pin assignment is involved; the firmware reads the
+ * channels through the keyboard peripheral's register window. */
+eg_adc adc_input(.clk(clk), .rstn(cpuresetn), .levels(adc_levels));
 
 AHBlite_Key_UART Keyboard_Interface(
     .HCLK(clk), .HRESETn(cpuresetn), .HSEL(HSEL_P2), .HADDR(HADDR_P2),
     .HTRANS(HTRANS_P2), .HSIZE(HSIZE_P2), .HPROT(HPROT_P2),
     .HWRITE(HWRITE_P2), .HWDATA(HWDATA_P2), .HREADY(HREADY_P2),
     .HREADYOUT(HREADYOUT_P2), .HRDATA(HRDATA_P2), .HRESP(HRESP_P2),
-    .key_data(key_data), .key_held(key_held), .key_clear(key_clear), .uart_irq(uart_interrupt), .uart_rx(uart_rx), .uart_tx(uart_tx)
+    .key_data(key_data), .key_held(key_held), .adc_levels(adc_levels),
+    .key_clear(key_clear), .uart_irq(uart_interrupt), .uart_rx(uart_rx), .uart_tx(uart_tx)
 );
 
 //------------------------------------------------------------------------------
@@ -390,13 +398,17 @@ wire     LCD_INI_en;
 wire     LCD_MODE;
 
 // Port 3 sub-decodes LCD 0x4005xxxx and SD SPI 0x4006xxxx.
-wire [31:0] lcd_read,sd_read;
+wire [31:0] lcd_read,sd_read,audio_read;
 wire lcd_ready,lcd_resp;
-reg sd_response;
+reg sd_response,audio_response;
+wire audio_hsel = HSEL_P3 && HADDR_P3[31:16]==16'h4007;
 always @(posedge clk or negedge cpuresetn)
     if(!cpuresetn) sd_response<=0;
     else if(HREADY_P3) sd_response<=HSEL_P3 && HTRANS_P3[1] && HADDR_P3[31:16]==16'h4006;
-assign HRDATA_P3=sd_response?sd_read:lcd_read;
+always @(posedge clk or negedge cpuresetn)
+    if(!cpuresetn) audio_response<=0;
+    else if(HREADY_P3) audio_response<=audio_hsel && HTRANS_P3[1] && !HWRITE_P3;
+assign HRDATA_P3=audio_response?audio_read:sd_response?sd_read:lcd_read;
 assign HREADYOUT_P3=1'b1;
 assign HRESP_P3=1'b0;
 AHBlite_SD SD_Interface(
@@ -405,6 +417,11 @@ AHBlite_SD SD_Interface(
     .HADDR(HADDR_P3),.HTRANS(HTRANS_P3),.HWRITE(HWRITE_P3),
     .HWDATA(HWDATA_P3),.HREADY(HREADY_P3),.HRDATA(sd_read),
     .SD_CLK(SD_CLK),.SD_CS(SD_CS),.SD_MOSI(SD_MOSI),.SD_MISO(SD_MISO));
+audio_synth Audio(
+    .HCLK(clk),.HRESETn(cpuresetn),.HSEL(audio_hsel),
+    .HWRITE(HWRITE_P3),.HREADY(HREADY_P3),.HADDR(HADDR_P3),.HWDATA(HWDATA_P3),
+    .HTRANS(HTRANS_P3),.HSIZE(HSIZE_P3),.HREADYOUT(),.HRESP(),
+    .HRDATA(audio_read),.audio_pwm(audio_pwm));
 AHBlite_LCD LCD_Interface(
         /* Connect to Interconnect Port 3 */
         .HCLK           (clk),

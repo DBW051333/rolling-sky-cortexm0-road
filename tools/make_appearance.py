@@ -35,7 +35,7 @@ for m in obj['models']:
  models.extend(struct.pack('<HH',len(boxes),0))
  for b in boxes:
   bounds=b['bounds'];colors=[color_fields.index(k) for k in b['colors']]
-  if len(bounds)!=6 or not all(0<=v<=512 for v in bounds) or b['flags']&~3:raise ValueError('Invalid model box')
+  if len(bounds)!=6 or not all(0<=v<=512 for v in bounds) or b['flags']&~7:raise ValueError('Invalid model box')
   models.extend(struct.pack('<6h4B',*bounds,*colors,b['flags']))
  models.extend(bytes((4-len(boxes))*16))
 for preset in obj['palettes']:
@@ -44,33 +44,15 @@ for preset in obj['palettes']:
   if sum(3+bool(b['flags']&1) for b in selected['boxes'])>budget:
    raise ValueError(f'{role} exceeds its renderer face budget')
 model_offset=append(models)
-im=Image.open(base/'assets/hills-background.png').convert('RGB')
-if im.size!=(240,235):raise ValueError('Keep supplied background geometry')
-palette=[];lookup={};runs=[];offsets=[0]
-for y in range(im.height):
- row=[]
- for x in range(im.width):
-  r,g,b=im.getpixel((x,y));v=((r>>3)<<11)|((g>>2)<<5)|(b>>3)
-  if v not in lookup:lookup[v]=len(palette);palette.append(v)
-  row.append(lookup[v])
- groups=[];last=row[0];count=0
- for value in row:
-  if value!=last:groups.append((count,last));last=value;count=0
-  count+=1
- groups.append((count,last))
- for count,color in groups:
-  if count==1:runs.append(color)
-  elif count<=112:runs.extend((count+142,color))
-  else:runs.extend((255,count,color))
- offsets.append(len(runs))
-if len(palette)!=144:raise ValueError('Background encoding requires 144 native colors')
-palette_offset=append(struct.pack('<144H',*palette))
-index_offset=append(struct.pack('<236H',*offsets))
-run_offset=append(bytes(runs))
+# The bitmap panorama is gone: road.c builds each scene's sky, silhouette and
+# void colour from a ramp plus a height profile, so 2.7 kB of cache no longer
+# buys four copies of the same hillside. Header slots 20..28 stay reserved and
+# are written as zero; appearance.c rejects anything that still fills them.
 size=len(pack)
 struct.pack_into('<II',pack,8,size,zlib.crc32(pack[64:]))
-struct.pack_into('<13H',pack,16,palette_offset,144,index_offset,235,run_offset,len(runs),palette[row[0]],look_offset,len(obj['palettes']),cue_offset,len(obj['bindings']),model_offset,len(obj['models']))
+struct.pack_into('<13H',pack,16,0,144,0,0,0,0,0,look_offset,len(obj['palettes']),
+                 cue_offset,len(obj['bindings']),model_offset,len(obj['models']))
 pack.extend(bytes((-len(pack))%512))
-if len(pack)>7680:raise ValueError('Artwork exceeds 7.5 KiB reserved cache')
+if len(pack)>4096:raise ValueError('Artwork exceeds the 4 KiB reserved cache')
 target=base/'sd_payload/RSART.BIN';target.parent.mkdir(exist_ok=True);target.write_bytes(pack)
-print(f'SD art: {size} data bytes, {len(pack)} padded bytes. RGB565 background + palettes + model geometry; no detailed art in firmware.')
+print(f'SD art: {size} data bytes, {len(pack)} padded bytes. Palettes + model geometry; scene backdrops are generated in firmware.')

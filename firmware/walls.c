@@ -7,14 +7,24 @@
 typedef struct { int16_t x,y; } Point;
 typedef struct {
     Point p[4];
-    int32_t slope[4];
+    /* x step per scanline in Q4 (1/16 px). Q8 would need an int32 per edge,
+     * which costs 16 bytes a face; at 240 px wide the coarse step is still
+     * under a pixel of drift over a whole face, and the cache is the scarce
+     * resource here. */
+    int16_t slope[4];
     int16_t top,bottom;
     uint32_t color;
 } Face;
-static Face faces[32];
+#define FACE_CACHE 44
+#define SCENERY_ROWS 4    /* how far ahead scenery is worth three faces a box */
+static Face faces[FACE_CACHE];
 static unsigned face_count;
+/* Static scenery may not exhaust the cache before the sparse mechanisms are
+ * appended, or a busy row of walls would silently erase a laser. */
+static unsigned face_limit=32;
+static unsigned static_count;   /* faces[0..static_count) is scenery, nearest first */
 static unsigned face_foreground;
-WallSpan wall_spans[67];
+WallSpan wall_spans[89];   /* 2*FACE_CACHE+1: every face adds two edges */
 unsigned wall_span_count;
 static int first_y,last_y;
 static int quotient(int n,int d) {
@@ -34,7 +44,7 @@ static __attribute__((noinline)) Point project(int x,int z,int h) {
 static void face(Point a,Point b,Point c,Point d,uint32_t color) {
     Face *f;
     unsigned i;
-    if(face_count==32) return;
+    if(face_count>=face_limit) return;
     f=&faces[face_count++];
     f->p[0]=a; f->p[1]=b; f->p[2]=c; f->p[3]=d;
     f->top=f->bottom=a.y;
@@ -47,7 +57,7 @@ static void face(Point a,Point b,Point c,Point d,uint32_t color) {
         if(u.y<f->top) f->top=u.y;
         if(u.y>f->bottom) f->bottom=u.y;
         if(v.y<u.y) { Point temp=u; u=v; v=temp; }
-        f->slope[i]=quotient((v.x-u.x)*256,v.y-u.y);
+        f->slope[i]=(int16_t)quotient((v.x-u.x)*16,v.y-u.y);
     }
     if(f->top<first_y) first_y=f->top;
     if(f->bottom>last_y) last_y=f->bottom;
@@ -87,12 +97,27 @@ void walls_prepare(const Road *r,uint32_t camera) {
              project(x+256,z+256,h),project(x,z+256,h),
              0x10000u|(age<128?look->fragile_fall_light:look->fragile_fall_dark));
     }
-    /* Object rows are sorted ascending; paint far walls before near walls. */
-    for(i=(int)r->level->tile_count-1;i>=0;i--) {
+    /* Object rows are sorted ascending; paint far walls before near walls.
+     * The cache pays for 32 scenery faces. Walking back from the far end
+     * spent them on scenery that is a few pixels tall: in Massif a tree row
+     * filled all 20 and the pillars right in front of the ball were dropped
+     * without a word, which reads as "the maze is missing its blocks".
+     * Count only as far back as the cache can actually pay for. */
+    face_limit=32;
+    {
+        /* Rows ascend with distance, so walking the array forwards goes from
+         * the row the camera just left outwards. Filling the cache nearest
+         * first keeps the scenery the player is about to hit and drops the
+         * far end, where a pillar is two pixels tall; the old code did the
+         * opposite and let a distant tree row evict everything closer. */
+        int lo=0;
+        while(lo<(int)r->level->tile_count &&
+              (int)((uint32_t)r->level->tiles[lo].row*256u)-(int)camera<512) lo++;
+        for(i=(unsigned)lo;i<r->level->tile_count;i++) {
         const TileEvent *tile=&r->level->tiles[i];
         const Appearance *look=appearance_for(r->level,tile->row);
         int z=(int)((uint32_t)tile->row*256)-(int)camera;
-        if(z<512 || z>(int)r->depth_q8[0]+256) continue;
+        if(z<512 || z>(int)r->depth_q8[ROAD_BALL_Y]+SCENERY_ROWS*256) continue;
         /* The ball is fixed at ROAD_BALL_Y. Obstacles whose world row has
          * moved closer to the camera than that plane are composited in front. */
         face_foreground=z<(int)r->depth_q8[ROAD_BALL_Y];
@@ -111,6 +136,11 @@ void walls_prepare(const Road *r,uint32_t camera) {
                 for(part=0;part<model->count;part++) {
                     const ArtBox *b=&model->boxes[part];
                     int top=b->top;
+                    /* Detail boxes only pay for themselves up close: a tree's
+                     * trunk is two pixels tall from three rows out, yet it
+                     * used to cost the same three faces as the crown and
+                     * pushed the whole row over the cache. */
+                    if((b->flags&4u) && gap>512) continue;
                     if(b->flags&2u) {
                         unsigned scale=gap>=1024?8u:gap>512?(unsigned)(1024-gap)>>1:256u;
                         top=b->bottom+((b->top-b->bottom)*(int)scale>>8);
@@ -142,46 +172,91 @@ void walls_prepare(const Road *r,uint32_t camera) {
             a.x++; d.x++; b.x--; c.x--;
             face(a,b,c,d,look->barrier_front);
         }
+        }
     }
-    /* Dynamic mechanisms take their pose from the same distance-driven phase
-     * the collision test uses; the cannon stays visible while the beam rests,
-     * so the warning window reads as "about to fire". Marker colors are fixed
-     * until skins catch up. */
+    static_count=face_count;
+    /* Mechanisms are posed by the same distance-driven phase the collision
+     * test uses: the cannon charges before it fires, the pendulum hangs from a
+     * fixed pivot, and the mover rides a rail that marks its whole travel. */
+    face_limit=FACE_CACHE;
     for(i=0;r->level && i<(int)r->level->mech_count;i++) {
         const LevelMech *mech=&r->level->mechs[i];
         uint32_t z_ball=camera+r->depth_q8[ROAD_BALL_Y];
         int z=(int)((uint32_t)mech->row*256u)-(int)camera;
         int x;
-        if(z<320 || z>(int)r->depth_q8[0]+400) continue;
+        if(z<64 || z>(int)r->depth_q8[0]+400) continue;
         x=mech->column*256-r->camera_x_q8;
         face_foreground=z<(int)r->depth_q8[ROAD_BALL_Y];
-        if(mech->kind==MECH_MOVER)
-            box(x-80+obstacle_mover_offset(mech,z_ball),z+48,160,160,0,512,
-                0xf81fu,0x9813u,0xffdfu);
-        else if(mech->kind==MECH_HAMMER) {
-            static const int16_t bounds[3][2]={{24,488},{560,720},{792,1256}};
-            /* Bands are absolute road coordinates; the nominal column is
-             * unused for a hammer sweeping the whole track. */
-            int base=-r->camera_x_q8;
-            unsigned index=obstacle_hammer_stage(mech,z_ball);
-            int left=bounds[index][0],right=bounds[index][1];
-            int center=left+(right-left)/2,top=mech->param;
-            /* Head box plus a thin arm rising to the swing pivot. */
-            box(base+left,z+64,right-left,128,0,top,0xffe0u,0xd29bu,0xffffu);
-            face(project(base+center-12,z+128,960),project(base+center+12,z+128,960),
-                 project(base+center+12,z+128,top),project(base+center-12,z+128,top),0x7befu);
-        }
-        else if(mech->kind==MECH_LASER) {
+        if(mech->kind==MECH_MOVER) {
+            int base=x+128;
+            int center=base+obstacle_mover_offset(mech,z_ball);
+            int reach=112+(int)mech->param;
+            const Appearance *look=appearance_for(r->level,mech->row);
+            /* The reference mover is a one-cell cube in the level's own block
+             * colours, sliding along a thin rail that stays anchored to the
+             * base column, so the travel reads before the cube moves. The
+             * offset spans +-param, hence the rail half length. */
+            box(base-reach,z+160,reach*2,48,0,8,0x18c3u,0x10a2u,0x2945u);
+            box(center-112,z+64,224,128,0,224,
+                look->solid_front,look->solid_side,look->solid_roof);
+        } else if(mech->kind==MECH_HAMMER) {
+            int pivot=640-r->camera_x_q8;
+            int head=pivot+obstacle_hammer_offset(mech,z_ball);
+            unsigned height=obstacle_hammer_height(mech,z_ball);
+            /* Arm from the pivot above the track down to the head, then the
+             * head itself; both follow the same swing phase. */
+            face(project(pivot-8,z+96,1256),project(pivot+8,z+96,1256),
+                 project(head+16,z+96,(int)height+40),
+                 project(head-16,z+96,(int)height+40),0x7bcfu);
+            box(head-112,z+48,224,160,(int)height-160,(int)height+160,
+                0xd6bbu,0x8c71u,0xffffu);
+        } else if(mech->kind==MECH_ROLLER) {
+            /* Three saw wheels on one shared axle rolling across the track;
+             * the group pose is the same triangle wave the collider uses, and
+             * the 512 Q8 span is exactly the collider's width so what hits is
+             * what the player sees. */
+            int center=x+128+obstacle_mover_offset(mech,z_ball);
+            box(center-256,z+64,160,128,0,256,0xfd20u,0x7a40u,0xffe0u);
+            box(center-80,z+64,160,128,0,256,0xfd20u,0x7a40u,0xffe0u);
+            box(center+96,z+64,160,128,0,256,0xfd20u,0x7a40u,0xffe0u);
+        } else if(mech->kind==MECH_FLY) {
+            /* Head on a vertical shaft: slams to the floor and lifts again.
+             * The arm drops from above the screen like the pendulum's, and
+             * the head height comes from the shared stroke function. */
+            unsigned h=obstacle_fly_height(mech,z_ball);
+            face(project(x+108,z+96,1256),project(x+148,z+96,1256),
+                 project(x+148,z+96,(int)h+60),project(x+108,z+96,(int)h+60),0x7bcfu);
+            box(x+32,z+48,192,160,(int)h-88,(int)h+88,0x8c71u,0x528au,0xffffu);
+        } else {
             unsigned state=obstacle_laser_state(mech,z_ball);
-            box(x+56,z+56,144,144,0,320,0x7befu,0x39e7u,0x9cd3u);
-            if(state)
-                box(x+80,z-(int)mech->param,96,(int)mech->param+152,0,896,
-                    state==2u?0xf800u:0xfd20u,
-                    state==2u?0xb900u:0xa500u,0xffe0u);
+            /* Painter order far to near: turret, then beam, then the muzzle
+             * ring over the joint. The ring is the whole telegraph - grey
+             * idle, amber charge, bright cyan rim while firing. */
+            box(x+80,z+96,96,96,0,128,0x2945u,0x1082u,0x4a69u);
+            if(state==2u) {
+                /* Four and a half rows of tube, one tile thick, lying on the
+                 * ground; the near end cap is the hot white core, roof and
+                 * side carry the cyan glow. */
+                int near=z-LASER_REACH_Q8;
+                if(near<24) near=24;
+                box(x+16,near,224,z+48-near,0,224,0xe7ffu,0x0ad0u,0x05fau);
+                face(project(x+88,near,160),project(x+152,near,160),
+                     project(x+152,z+40,160),project(x+88,z+40,160),0xd7ffu);
+            }
+            {
+                uint16_t rim=state==2u?0xf858u:state==1u?0xfd20u:0x4a69u;
+                uint16_t eye=state==2u?0x0ef8u:state==1u?0x9a40u:0x2945u;
+                face(project(x+16,z+48,16),project(x+240,z+48,16),
+                     project(x+240,z+48,240),project(x+16,z+48,240),rim);
+                face(project(x+36,z+44,36),project(x+220,z+44,36),
+                     project(x+220,z+44,220),project(x+36,z+44,220),eye);
+                face(project(x+88,z+40,88),project(x+168,z+40,88),
+                     project(x+168,z+40,168),project(x+88,z+40,168),0x1082u);
+            }
         }
     }
 }
-/* Each painted face adds at most two boundaries: 32*2+1 <= 67. */
+/* Each painted face adds at most two boundaries: 44*2+1 = 89. */
 static unsigned split_at(int x) {
     unsigned i,j;
     for(i=0;i<wall_span_count;i++) {
@@ -196,40 +271,45 @@ static unsigned split_at(int x) {
     }
     return wall_span_count;
 }
+/* One face on one scanline: the span between its leftmost and rightmost edge
+ * crossing. Split out so the two paint passes below share it instead of
+ * carrying a copy each. */
+static void paint_face(const Face *f,int y,unsigned *active) {
+    int left=32767,right=-32768;
+    unsigned edge,begin,end,j;
+    if(y<f->top || y>=f->bottom) return;
+    for(edge=0;edge<4;edge++) {
+        Point a=f->p[edge],b=f->p[(edge+1)&3];
+        int hit;
+        if(a.y>b.y) { Point t=a; a=b; b=t; }
+        if(y<a.y || y>=b.y) continue;
+        hit=a.x+((y-a.y)*f->slope[edge]>>4);
+        if(hit<left) left=hit;
+        if(hit>right) right=hit;
+    }
+    if(left<0) left=0;
+    if(right>ROAD_WIDTH) right=ROAD_WIDTH;
+    if(left>=right) return;
+    begin=split_at(left); end=split_at(right);
+    wall_spans[begin].right=(int16_t)right;
+    wall_spans[begin].color=f->color;
+    for(j=end;j<wall_span_count;j++) wall_spans[begin+1+j-end]=wall_spans[j];
+    wall_span_count-=end-begin-1;
+    *active=1;
+}
 int walls_line(unsigned y) {
-    unsigned i;
-    int active=0;
+    unsigned i,out,active=0;
     wall_span_count=0;
     if((int)y<first_y || (int)y>=last_y) return 0;
     wall_spans[0].left=0; wall_spans[0].right=ROAD_WIDTH; wall_spans[0].color=0;
     wall_span_count=1;
-    for(i=0;i<face_count;i++) {
-        const Face *f=&faces[i];
-        int left=32767,right=-32768;
-        unsigned edge;
-        if((int)y<f->top || (int)y>=f->bottom) continue;
-        for(edge=0;edge<4;edge++) {
-            Point a=f->p[edge],b=f->p[(edge+1)&3];
-            int hit;
-            if(a.y>b.y) { Point t=a; a=b; b=t; }
-            if((int)y<a.y || (int)y>=b.y) continue;
-            hit=a.x+(((int)y-a.y)*f->slope[edge]>>8);
-            if(hit<left) left=hit;
-            if(hit>right) right=hit;
-        }
-        if(left<0) left=0;
-        if(right>ROAD_WIDTH) right=ROAD_WIDTH;
-        if(left<right) {
-            unsigned begin=split_at(left),end=split_at(right),j;
-            wall_spans[begin].right=(int16_t)right;
-            wall_spans[begin].color=f->color;
-            for(j=end;j<wall_span_count;j++) wall_spans[begin+1+j-end]=wall_spans[j];
-            wall_span_count-=end-begin-1;
-            active=1;
-        }
-    }
+    /* Scenery is collected nearest-first so the cache always holds what the
+     * ball is about to hit, which means it has to be painted in reverse;
+     * mechanisms follow in their own order and stay on top. */
+    for(i=static_count;i--;) paint_face(&faces[i],y,&active);
+    for(i=static_count;i<face_count;i++) paint_face(&faces[i],y,&active);
     if(active) {
-        unsigned out=0;
+        out=0;
         for(i=0;i<wall_span_count;i++) {
             if(out && wall_spans[out-1].color==wall_spans[i].color)
                 wall_spans[out-1].right=wall_spans[i].right;
@@ -237,5 +317,5 @@ int walls_line(unsigned y) {
         }
         wall_span_count=out;
     }
-    return active;
+    return (int)active;
 }

@@ -20,14 +20,41 @@
 #define ROAD_CAMERA_MAX 1152
 #define ROAD_CAMERA_CENTER 640
 #define ROAD_BALL_Y 192
-#define ROAD_JUMP_MS 1536u
+#define ROAD_JUMP_MS 1366u   /* 0.75 Q8/ms x 1366 = 1024.5 Q8: the reference
+                                four-row pad flight, landing a hair past the
+                                take-off row plus four so chains re-trigger */
 #define ROAD_SHORT_JUMP_MS 768u
-/* Gem and finish-line markers are art-independent until skins catch up. */
-#define ROAD_GEM_CELL 0x03efu
-#define ROAD_GEM_CORE 0x07ffu
+/* Gem and finish-line markers are art-independent until skins catch up.
+ * Gems are drawn as a four-tone diamond the size of the local tile, not as a
+ * handful of pixels, so they stay readable at the far end of the track.
+ * Colours sampled from the reference gameplay: coral-red diamonds. */
+#define ROAD_GEM_LIGHT 0xf842u
+#define ROAD_GEM_TOP 0xc020u
+#define ROAD_GEM_MID 0xd000u
+#define ROAD_GEM_LOW 0x8000u
+#define ROAD_GEM_EDGE 0x0233u
 #define ROAD_FINISH_A 0xffffu
 #define ROAD_FINISH_B 0x0000u
+/* The finishing gate. The reference ends a level by rolling into a ring
+ * portal, not by crossing a painted stripe: a broad orange rim, one thin
+ * bright-yellow band inside it, and a cyan disc glowing at the centre. */
+#define ROAD_GATE_EDGE  0x8a83u   /* burnt outline on the outside of the rim */
+#define ROAD_GATE_RIM   0xb3a5u   /* outer rim, the darker orange */
+#define ROAD_GATE_RIM2  0xe509u   /* lit inner rim */
+#define ROAD_GATE_BAND  0xf707u   /* the thin yellow ring */
+#define ROAD_GATE_CORE  0xdfffu   /* cyan disc, dead centre: the glow */
+#define ROAD_GATE_GLOW  0x7fbfu   /* cyan disc, next ring out */
+#define ROAD_GATE_MEM_A 0x467eu   /* cyan disc, middle */
+#define ROAD_GATE_MEM_B 0x14b9u   /* cyan disc, edge: deep teal */
 struct Level;
+/* Overlay hooks share the road's own scanline, so a HUD or a gem sprite
+ * never becomes a second, visible write to the panel. `rows` is the lowest
+ * scanline the overlay does not touch; below it the road streams directly. */
+typedef struct {
+    unsigned rows;
+    void (*line)(uint16_t *pixels,unsigned y,void *context);
+    void *context;
+} RoadOverlay;
 typedef struct {
     uint32_t row;
     int32_t center_x_q8;
@@ -47,8 +74,11 @@ typedef struct {
     uint16_t death_ms;
     uint8_t death_kind;
     uint32_t gem_bits;   /* collected gems, one bit per gem index */
+    uint32_t mech_fired; /* mechanisms that already announced themselves */
     uint16_t gem_cursor,mech_cursor;
+    uint16_t sfx;        /* pending SFX_* events, drained by main.c */
     uint8_t gems_got;
+    const RoadOverlay *overlay;
 } Road;
 typedef struct {
     void (*begin_line)(unsigned x,unsigned y,unsigned pixels,void *context);

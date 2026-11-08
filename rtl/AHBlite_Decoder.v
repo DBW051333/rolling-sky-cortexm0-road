@@ -54,7 +54,8 @@ assign P2_HSEL = (HADDR[31:9] == 23'h200000) ? Port2_en : 1'b0;
 
 //0X40050000 LCD 
 /*Insert LCD decoder code there*/
-assign P3_HSEL = ((HADDR[31:16] == 16'h4005) || (HADDR[31:16] == 16'h4006))   ? Port3_en : 1'b0;
+assign P3_HSEL = ((HADDR[31:16] == 16'h4005) || (HADDR[31:16] == 16'h4006) ||
+                  (HADDR[31:16] == 16'h4007)) ? Port3_en : 1'b0;
 /***********************************/
 
 

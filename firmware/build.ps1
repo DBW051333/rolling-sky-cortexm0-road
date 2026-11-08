@@ -10,8 +10,13 @@ try {
     if($Simulation){$flags=@('-DROAD_SIM_FAST_INIT');$image='code.sim.hex'}
     if($Profile){$flags=@('-DROAD_SIM_FAST_INIT','-DROAD_PROFILE');$image='code.profile.hex'}
     if($Benchmark){$flags=@('-DROAD_SIM_FAST_INIT','-DROAD_BENCHMARK');$image='code.bench.hex'}
-    foreach($file in @('main','road','level','obstacle','walls','sd_levels','glass','appearance')) {
-        $opt=if($file -in @('appearance','main','sd_levels')){'-Oz'}else{'-O2'}
+    foreach($file in @('main','road','level','obstacle','walls','sd_levels','glass','appearance','sound')) {
+        # level.c, glass.c, sound.c and obstacle.c are on the -Oz list to stay
+        # under the 0x7000 ceiling now that the synth is back in the image.
+        # None of them costs anything measurable: level_step() runs once a
+        # frame, glass_moving_mask() once a row, obstacle_*() once a frame from
+        # level_step(), and the per-pixel work all lives in road.c at -O2.
+        $opt=if($file -in @('appearance','main','sd_levels','walls','level','glass','sound','obstacle')){'-Oz'}else{'-O2'}
         & "$bin\armclang.exe" --target=arm-arm-none-eabi -mcpu=cortex-m0 -mthumb $opt -ffreestanding -fno-builtin -fno-common -g -Wall -Wextra @flags -c "$file.c" -o "Output/$file.o"
         if($LASTEXITCODE){throw "Compile failed: $file"}
     }
@@ -25,7 +30,7 @@ try {
             $extraObjects+="Output/$file.o"
         }
     }
-    & "$bin\armlink.exe" --no_scanlib --scatter code.sct --entry Reset_Handler --map --list Output/code.map -o Output/code.axf Output/startup.o Output/main.o Output/road.o Output/level.o Output/obstacle.o Output/walls.o Output/sd_levels.o Output/glass.o Output/appearance.o @extraObjects
+    & "$bin\armlink.exe" --no_scanlib --scatter code.sct --entry Reset_Handler --map --list Output/code.map -o Output/code.axf Output/startup.o Output/main.o Output/road.o Output/level.o Output/obstacle.o Output/walls.o Output/sd_levels.o Output/glass.o Output/appearance.o Output/sound.o @extraObjects
     if($LASTEXITCODE){throw 'Link failed'}
     & "$bin\fromelf.exe" --vhx --32x1 Output/code.axf --output $image
     if($LASTEXITCODE){throw 'HEX failed'}

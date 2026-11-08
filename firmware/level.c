@@ -2,6 +2,10 @@
 #include "obstacle.h"
 #include "sd_levels.h"
 #include "glass.h"
+#include "sound.h"
+/* Lateral window for a gem, in Q8 of half a cell (128). A little wider than
+ * the old 96 so a gem in the lane you are already in is never a near miss. */
+#define GEM_REACH 112
 /* Full ground is implicit between runs. Opening rows give time to orient. */
 static const GroundRun first_ground[]={
     {28,3,27}, {44,3,19}, {60,3,17}
@@ -39,8 +43,11 @@ const Level *const levels[LEVEL_COUNT]={&level_one,&level_two,&hills_level};
 /* Logical vertical position in fixed Q8 units, independent of artwork. */
 unsigned level_jump_height_q8(const Road *road) {
     unsigned total=road->jump_total,remaining=road->jump_ms;
-    unsigned coefficient=total==ROAD_SHORT_JUMP_MS?6u:3u;
-    return (remaining*(total-remaining)*coefficient)>>11;
+    /* Apex = coefficient*total^2/16384: 797 Q8 (~3.1 tiles) for the full
+     * flight and 432 for the short one, matching the reference arc after
+     * ROAD_JUMP_MS was retuned from a 4.5-row to a 4-row flight. */
+    unsigned coefficient=total==ROAD_SHORT_JUMP_MS?12u:7u;
+    return (remaining*(total-remaining)*coefficient)>>12;
 }
 unsigned road_jump_height(const Road *road) {
     return (level_jump_height_q8(road)*3u)>>5;
@@ -76,7 +83,7 @@ void level_load(Road *road,const Level *level,uint32_t *camera) {
     road->forward_remainder=0;
     road->jump_ms=0; road->jump_row=0xffffu; road->jump_total=ROAD_JUMP_MS;
     road->death_ms=0; road->death_kind=0;
-    road->gem_bits=0; road->gems_got=0;
+    road->gem_bits=0; road->gems_got=0; road->sfx=0; road->mech_fired=0;
     road->gem_cursor=0; road->mech_cursor=0;
     *camera=0;
 }
@@ -118,19 +125,25 @@ unsigned level_step(Road *road,uint32_t *camera,int direction,uint32_t ms) {
         }
         glass_update(road,z);
         /* Gems are picked up by passing through the cell, grounded or airborne,
-         * with a wider lateral window than the pads to feel generous. */
+         * with a wider lateral window than the pads to feel generous.
+         *
+         * Swept, never compared for equality. z advances by however much time
+         * the frame took, and one slow frame steps over a whole row: with the
+         * old `gems[i].row==row` test the cursor above had already walked past
+         * that row, so its gem could never be picked up again. That is exactly
+         * how a twenty-gem level ends up looking like a nineteen-gem level --
+         * the gem is on the map, it is drawn, and it is impossible to take. */
         {
             const LevelGem *gems=road->level->gems;
-            unsigned total=road->level->gem_count,i;
+            unsigned total=road->level->gem_count;
             unsigned row=z>>8;
-            while(road->gem_cursor<total && gems[road->gem_cursor].row<row)
-                road->gem_cursor++;
-            for(i=road->gem_cursor;i<total && gems[i].row==row;i++) {
+            while(road->gem_cursor<total && gems[road->gem_cursor].row<=row) {
+                unsigned i=road->gem_cursor++;
                 int32_t dx;
                 if(road->gem_bits>>i&1u) continue;
                 dx=road->camera_x_q8-(int32_t)(gems[i].column*256+128);
                 if(dx<0) dx=-dx;
-                if(dx<=96) { road->gem_bits|=1u<<i; road->gems_got++; }
+                if(dx<=GEM_REACH) { road->gem_bits|=1u<<i; road->gems_got++; road->sfx|=SFX_GEM; }
             }
         }
         height=level_jump_height_q8(road);
@@ -169,6 +182,20 @@ unsigned level_step(Road *road,uint32_t *camera,int direction,uint32_t ms) {
                 base=(uint32_t)mechs[i].row*256u;
                 if(base>z+1280u) break; /* sorted: nothing else is near yet */
                 if(base+640u<z) continue;
+                /* Announce each mechanism once, the first time it can hurt:
+                 * the cannon when it starts firing, the hammer as the ball
+                 * comes within two rows of it. */
+                if(!(road->mech_fired>>i&1u)) {
+                    unsigned fire=0;
+                    if(mechs[i].kind==MECH_LASER)
+                        fire=obstacle_laser_state(&mechs[i],z)==2u;
+                    else if(mechs[i].kind==MECH_HAMMER && base>z)
+                        fire=(base-z)<512u;
+                    if(fire) {
+                        road->mech_fired|=1u<<i;
+                        road->sfx|=(mechs[i].kind==MECH_LASER)?SFX_LASER:SFX_HAMMER;
+                    }
+                }
                 if(obstacle_mech_volume(&mechs[i],z,&volume) &&
                    obstacle_hits_ball(&volume,road->camera_x_q8,z,height))
                     return GAME_HIT;
@@ -178,12 +205,16 @@ unsigned level_step(Road *road,uint32_t *camera,int direction,uint32_t ms) {
             unsigned column=1u<<(road->camera_x_q8>>8);
             if(!(road_mask(road,z>>8)&column)) return GAME_FELL;
             if(glass&column) glass_touch(road,z>>8,road->camera_x_q8>>8,z);
-            /* Trigger at pad center; jump clears the next row's low wall. */
-            if(road->jump_row!=(z>>8) && (z&255u)>=128 &&
-               ((pad|short_pad)&column)) {
+            /* Trigger on pad contact (leading edge of the row), like the
+             * reference set: the flight then spans exactly four rows, so a
+             * chain lands on the next pad's leading edge and re-triggers.
+             * The old center-row trigger stretched hops to five rows, which
+             * skipped every second pad of a reference chain. */
+            if(road->jump_row!=(z>>8) && ((pad|short_pad)&column)) {
                 road->jump_total=(short_pad&column)?ROAD_SHORT_JUMP_MS:ROAD_JUMP_MS;
                 road->jump_ms=road->jump_total;
                 road->jump_row=(uint16_t)(z>>8);
+                road->sfx|=SFX_JUMP;
             }
         }
     } while(ms);

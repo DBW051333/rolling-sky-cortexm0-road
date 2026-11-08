@@ -24,7 +24,12 @@ typedef struct {
     uint16_t row;
     uint8_t column;
 } LevelGem;
-enum { MECH_LASER=1, MECH_MOVER=2, MECH_HAMMER=3 };
+enum { MECH_LASER=1, MECH_MOVER=2, MECH_HAMMER=3, MECH_ROLLER=4, MECH_FLY=5 };
+/* One ceiling for the sparse tables, shared by the loader, the menu readout
+ * and the arrays it fills, so raising it can never leave a stale copy behind
+ * (tools/make_sd_levels.py keeps the matching GEM_MAX/MECH_MAX). */
+#define GEM_TABLE_MAX 32
+#define MECH_TABLE_MAX 32
 typedef struct LevelMech {
     uint16_t row;
     uint8_t column,kind;

@@ -66,12 +66,19 @@ static uint32_t mech_phase(const LevelMech *mech,uint32_t z) {
     return (z-(uint32_t)mech->row*256u+mech->phase)&((256u<<mech->period_shift)-1u);
 }
 
+/* Reach and height live in obstacle.h so the renderer and the collider share
+ * one set of figures. The state thresholds encode the reference telegraph:
+ * inert nine rows out, the ring warms up across rows nine..five, firing at
+ * five. */
+
 unsigned obstacle_laser_state(const LevelMech *mech,uint32_t z) {
-    uint32_t period=256u<<mech->period_shift,half=period>>1;
-    uint32_t phase=mech_phase(mech,z);
-    if(phase>=half) return 2u;              /* firing */
-    if(phase>=half-(period>>4)) return 1u;  /* warning window before firing */
-    return 0u;                              /* safe */
+    /* Distance REMAINING to the cannon. The 2026-10-29 image had this sign
+     * flipped, which lit the full-length beam the moment the cannon entered
+     * the view window instead of telegraphing an approach. */
+    int32_t d=(int32_t)((uint32_t)mech->row*256u)-(int32_t)z;
+    if(d>2304) return 0u;   /* inert: the cannon is nine or more rows ahead */
+    if(d>1280) return 1u;   /* charging: ring warms up across rows nine..five */
+    return 2u;              /* firing: the reference cannon fires at five */
 }
 
 int obstacle_mover_offset(const LevelMech *mech,uint32_t z) {
@@ -82,10 +89,30 @@ int obstacle_mover_offset(const LevelMech *mech,uint32_t z) {
                  (mech->period_shift+6));
 }
 
-/* Hammer stages map 0..3 to band indices left/middle/right/middle. */
-unsigned obstacle_hammer_stage(const LevelMech *mech,uint32_t z) {
-    unsigned stage=mech_phase(mech,z)>>(mech->period_shift+6u);
-    return stage==2u?2u:(stage?1u:0u);
+/* Pendulum: one sine cycle drives both the sweep across the road and the rise
+ * away from it, so the head really hangs from a pivot and arcs instead of
+ * teleporting between column bands. */
+static const int16_t swing_sine[16]={0,98,181,237,256,237,181,98,
+                                     0,-98,-181,-237,-256,-237,-181,-98};
+static int swing_sin(const LevelMech *mech,uint32_t z) {
+    unsigned index=(mech_phase(mech,z)>>(mech->period_shift+4u))&15u;
+    return (swing_sine[index]*196)>>8; /* 50 degree swing */
+}
+int obstacle_hammer_offset(const LevelMech *mech,uint32_t z) {
+    return (swing_sin(mech,z)*1100)>>8;
+}
+unsigned obstacle_hammer_height(const LevelMech *mech,uint32_t z) {
+    int s=swing_sin(mech,z);
+    int cosine=256-((s*s)>>9); /* cos(asin(s)) to second order, in Q8 */
+    return (unsigned)(1256-((cosine*1100)>>8));
+}
+/* Fly hammer: the head rides a vertical shaft between the floor and the air
+ * on the distance clock. A grounded ball is caught at the bottom of the
+ * stroke and passes underneath at the top, matching the reference jackhammer
+ * that "can be passed under while raised". param is the stroke amplitude. */
+unsigned obstacle_fly_height(const LevelMech *mech,uint32_t z) {
+    unsigned index=(mech_phase(mech,z)>>(mech->period_shift+4u))&15u;
+    return (unsigned)(450+((int32_t)swing_sine[index]*(int32_t)mech->param>>8));
 }
 
 int obstacle_mech_volume(const LevelMech *mech,uint32_t z,ObstacleVolume *volume) {
@@ -100,30 +127,57 @@ int obstacle_mech_volume(const LevelMech *mech,uint32_t z,ObstacleVolume *volume
         volume->z_min_q8=(uint32_t)mech->row*256u+48u;
         volume->z_max_q8=(uint32_t)mech->row*256u+208u;
         volume->bottom_q8=0;
-        volume->top_q8=COLLISION_GROUND_TOP_Q8; /* low enough to jump over */
+        /* The reference mover is a one-cell cube: hop over it or dodge it. */
+        volume->top_q8=256u;
         return 1;
     }
     if(mech->kind==MECH_HAMMER) {
-        /* Discrete swing approximation: quarter-period stages sweep
-         * left -> middle -> right -> middle, each a fixed column band. */
-        static const int16_t bounds[3][2]={{24,488},{560,720},{792,1256}};
-        unsigned index=obstacle_hammer_stage(mech,z);
-        volume->x_min_q8=bounds[index][0];
-        volume->x_max_q8=bounds[index][1];
+        /* Head box of the swinging pendulum. `param` stays reserved: the pose
+         * comes from the shared pivot geometry, not from per-level data. */
+        int center=640+obstacle_hammer_offset(mech,z);
+        unsigned height=obstacle_hammer_height(mech,z);
+        volume->x_min_q8=center-112;
+        volume->x_max_q8=center+112;
+        volume->z_min_q8=(uint32_t)mech->row*256u+48u;
+        volume->z_max_q8=(uint32_t)mech->row*256u+208u;
+        /* The volume keeps unsigned heights, so the half cell the head spends
+         * below the floor is simply clipped away. */
+        volume->bottom_q8=(uint16_t)(height>160u?height-160u:0u);
+        volume->top_q8=(uint16_t)(height+160u);
+        return 1;
+    }
+    if(mech->kind==MECH_ROLLER) {
+        /* The three-wheel saw group rolls across the track; the whole group
+         * shares one box as wide as the wheels. `param` is the sweep
+         * amplitude, the same triangle wave the mover uses. */
+        int center=mech->column*256+128+obstacle_mover_offset(mech,z);
+        /* Two tiles wide, matching the three wheels the renderer draws. The
+         * collision used to be 2.6 tiles, which made a saw group close a
+         * five-lane road wherever the track narrows to two lanes. */
+        volume->x_min_q8=center-256;
+        volume->x_max_q8=center+256;
         volume->z_min_q8=(uint32_t)mech->row*256u+48u;
         volume->z_max_q8=(uint32_t)mech->row*256u+208u;
         volume->bottom_q8=0;
-        volume->top_q8=mech->param; /* head height; the peak jump clears it */
+        volume->top_q8=280u;
+        return 1;
+    }
+    if(mech->kind==MECH_FLY) {
+        unsigned h=obstacle_fly_height(mech,z);
+        volume->x_min_q8=mech->column*256+32;
+        volume->x_max_q8=mech->column*256+224;
+        volume->z_min_q8=(uint32_t)mech->row*256u+48u;
+        volume->z_max_q8=(uint32_t)mech->row*256u+208u;
+        volume->bottom_q8=(uint16_t)(h>88u?h-88u:0u);
+        volume->top_q8=(uint16_t)(h+88u);
         return 1;
     }
     if(mech->kind!=MECH_LASER || obstacle_laser_state(mech,z)!=2u) return 0;
     volume->x_min_q8=mech->column*256+48;
     volume->x_max_q8=mech->column*256+208;
-    /* The beam reaches back toward the approaching player and covers the
-     * cannon cell; full height, so the only answers are timing or a lane. */
-    volume->z_min_q8=(uint32_t)mech->row*256u-(uint32_t)mech->param;
+    volume->z_min_q8=(uint32_t)mech->row*256u-LASER_REACH_Q8;
     volume->z_max_q8=(uint32_t)mech->row*256u+208u;
     volume->bottom_q8=0;
-    volume->top_q8=COLLISION_AIR_TOP_Q8;
+    volume->top_q8=LASER_TOP_Q8;
     return 1;
 }

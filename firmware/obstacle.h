@@ -33,9 +33,15 @@ int obstacle_hits_ball(const ObstacleVolume *volume,int32_t x_q8,
  * The phase clock is the ball's travelled distance z, so pause, restart and
  * frame jitter never change the rhythm a player has learned. */
 struct LevelMech;
+/* Shared laser geometry: four and a half rows of reach, one tile tall, per
+ * the reference set ("fired when the ball is five rows away", soft tip). */
+#define LASER_REACH_Q8 1152u
+#define LASER_TOP_Q8 256u
 unsigned obstacle_laser_state(const struct LevelMech *mech,uint32_t z);
 int obstacle_mover_offset(const struct LevelMech *mech,uint32_t z);
-unsigned obstacle_hammer_stage(const struct LevelMech *mech,uint32_t z);
+int obstacle_hammer_offset(const struct LevelMech *mech,uint32_t z);
+unsigned obstacle_hammer_height(const struct LevelMech *mech,uint32_t z);
+unsigned obstacle_fly_height(const struct LevelMech *mech,uint32_t z);
 int obstacle_mech_volume(const struct LevelMech *mech,uint32_t z,
                          ObstacleVolume *volume);
 

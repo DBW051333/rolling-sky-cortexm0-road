@@ -13,8 +13,8 @@ static uint32_t gem_offsets[SD_LEVEL_MAX],mech_offsets[SD_LEVEL_MAX];
 static unsigned count,row_shift,row_stride,format_version;
 static uint16_t level_ids[SD_LEVEL_MAX];
 static TileEvent visible[64];
-static LevelGem sd_gems[32];
-static LevelMech sd_mechs[24];
+static LevelGem sd_gems[GEM_TABLE_MAX];
+static LevelMech sd_mechs[MECH_TABLE_MAX];
 Level sd_level;
 volatile unsigned sd_diag_stage,sd_diag_response,sd_diag_detail;
 static uint32_t le32(const uint8_t *p) {
@@ -183,6 +183,20 @@ unsigned sd_levels_mount(void) {
 }
 unsigned sd_levels_count(void) { return count; }
 unsigned sd_levels_id(unsigned index) { return index<count?level_ids[index]:0; }
+/* Menu readout: the pack revision and how many mechanisms the selected level
+ * actually carries. A V4 pack written before mechanisms existed answers 0,
+ * which is what "insert the card and still see no laser" looks like. */
+unsigned sd_levels_format(void) { return format_version; }
+unsigned sd_levels_mech_count(unsigned index) {
+    unsigned total;
+    if(index>=count || format_version<4 || !mech_offsets[index]) return 0;
+    if(!file_sector(mech_offsets[index],sector)) return 0;
+    total=le16(sector);
+    /* Same ceiling as load_tables and sd_mechs[]: 32 since the Massif decode
+     * left the cap at 24, which made the menu report M00 for a 32-mechanism
+     * level and read as "the card has no mechanisms". */
+    return total>MECH_TABLE_MAX?0:total;
+}
 static int load_chunk(uint32_t chunk) {
     unsigned slot=chunk&1u,i;
     uint8_t *target=rows+slot*512;
@@ -213,7 +227,7 @@ static int load_tables(unsigned index) {
         unsigned total;
         if(!file_sector(gem_offsets[index],sector)) return 0;
         total=le16(sector);
-        if(total>32) return 0;
+        if(total>GEM_TABLE_MAX) return 0;
         for(i=0;i<total;i++) {
             unsigned row=le16(sector+2+i*3);
             if(row>=sd_level.row_count || sector[4+i*3]>=5 ||
@@ -227,15 +241,15 @@ static int load_tables(unsigned index) {
         unsigned total;
         if(!file_sector(mech_offsets[index],sector)) return 0;
         total=le16(sector);
-        if(total>24) return 0;
+        if(total>MECH_TABLE_MAX) return 0;
         for(i=0;i<total;i++) {
             const uint8_t *p=sector+2+i*9;
             unsigned row=le16(p),kind=p[3],shift=p[4],param;
-            if(row>=sd_level.row_count || p[2]>=5 || kind<1 || kind>3 ||
+            if(row>=sd_level.row_count || p[2]>=5 || kind<1 || kind>5 ||
                shift<2 || shift>5 || le16(p+5)>=(256u<<shift)) return 0;
             param=le16(p+7);
             if(kind==MECH_HAMMER ? (param<256u || param>680u)
-               : param>(kind==MECH_LASER?640u:512u)) return 0;
+               : param>(kind==MECH_LASER?640u:kind==MECH_FLY?900u:512u)) return 0;
             if(i && row<sd_mechs[i-1].row) return 0;
             sd_mechs[i].row=(uint16_t)row;
             sd_mechs[i].column=p[2];

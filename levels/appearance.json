@@ -1,44 +1,11 @@
 {
   "palettes": [
     {
-      "name": "legacy",
-      "background": 2115,
-      "light": 13695,
-      "dark": 9302,
-      "grid": 6438,
-      "pad": 2047,
-      "solid_model": 0,
-      "backdrop": 0,
-      "fragile": 30174,
-      "fragile_edge": 51199,
-      "fragile_fall_light": 26044,
-      "fragile_fall_dark": 17302,
-      "barrier_front": 55561,
-      "barrier_side": 34822,
-      "barrier_top": 64810,
-      "solid_front": 33841,
-      "solid_side": 21131,
-      "solid_roof": 2047,
-      "solid_inset": 40179,
-      "trunk_front": 35621,
-      "trunk_side": 22979,
-      "trunk_top": 46153,
-      "leaf_front": 11374,
-      "leaf_side": 7017,
-      "leaf_top": 24018,
-      "short_pad": 63519,
-      "air_front": 38943,
-      "air_side": 22543,
-      "air_top": 51455,
-      "air_model": 2,
-      "ground_model": 3
-    },
-    {
       "name": "hills",
-      "background": 2115,
-      "light": 65297,
-      "dark": 63182,
-      "grid": 54632,
+      "background": 62667,
+      "light": 64936,
+      "dark": 45699,
+      "grid": 52163,
       "pad": 64800,
       "solid_model": 0,
       "backdrop": 1,
@@ -69,14 +36,80 @@
     {
       "name": "forest",
       "background": 2115,
-      "light": 28242,
-      "dark": 23951,
-      "grid": 18092,
+      "light": 26253,
+      "dark": 11079,
+      "grid": 15530,
       "pad": 64800,
       "solid_model": 1,
       "backdrop": 1,
-      "fragile": 30174,
-      "fragile_edge": 51199,
+      "fragile": 17503,
+      "fragile_edge": 26301,
+      "fragile_fall_light": 26044,
+      "fragile_fall_dark": 17302,
+      "barrier_front": 55561,
+      "barrier_side": 34822,
+      "barrier_top": 64810,
+      "solid_front": 33841,
+      "solid_side": 21131,
+      "solid_roof": 2047,
+      "solid_inset": 40179,
+      "trunk_front": 35621,
+      "trunk_side": 22979,
+      "trunk_top": 46153,
+      "leaf_front": 11374,
+      "leaf_side": 7017,
+      "leaf_top": 24018,
+      "short_pad": 63519,
+      "air_front": 38943,
+      "air_side": 22543,
+      "air_top": 51455,
+      "air_model": 2,
+      "ground_model": 3
+    },
+    {
+      "name": "massif_gold",
+      "background": 50062,
+      "light": 61151,
+      "dark": 31477,
+      "grid": 37849,
+      "pad": 64800,
+      "solid_model": 0,
+      "backdrop": 1,
+      "fragile": 46138,
+      "fragile_edge": 61151,
+      "fragile_fall_light": 26044,
+      "fragile_fall_dark": 17302,
+      "barrier_front": 55561,
+      "barrier_side": 34822,
+      "barrier_top": 64810,
+      "solid_front": 33841,
+      "solid_side": 21131,
+      "solid_roof": 2047,
+      "solid_inset": 40179,
+      "trunk_front": 35621,
+      "trunk_side": 22979,
+      "trunk_top": 46153,
+      "leaf_front": 11374,
+      "leaf_side": 7017,
+      "leaf_top": 24018,
+      "short_pad": 63519,
+      "air_front": 38943,
+      "air_side": 22543,
+      "air_top": 51455,
+      "air_model": 2,
+      "ground_model": 3
+    },
+    {
+      "name": "massif_fantasy",
+      "background": 2115,
+      "light": 4356,
+      "dark": 31299,
+      "grid": 717,
+      "pad": 64800,
+      "solid_model": 1,
+      "backdrop": 1,
+      "fragile": 11130,
+      "fragile_edge": 32511,
       "fragile_fall_light": 26044,
       "fragile_fall_dark": 17302,
       "barrier_front": 55561,
@@ -101,6 +134,24 @@
     }
   ],
   "bindings": [
+    {
+      "level_id": 1,
+      "first_row": 0,
+      "end_row": 65535,
+      "palette": "hills"
+    },
+    {
+      "level_id": 2,
+      "first_row": 0,
+      "end_row": 65535,
+      "palette": "hills"
+    },
+    {
+      "level_id": 3,
+      "first_row": 0,
+      "end_row": 65535,
+      "palette": "hills"
+    },
     {
       "level_id": 4,
       "first_row": 0,
@@ -128,6 +179,36 @@
     {
       "level_id": 4,
       "first_row": 224,
+      "end_row": 65535,
+      "palette": "hills"
+    },
+    {
+      "level_id": 5,
+      "first_row": 0,
+      "end_row": 70,
+      "palette": "hills"
+    },
+    {
+      "level_id": 5,
+      "first_row": 70,
+      "end_row": 172,
+      "palette": "massif_gold"
+    },
+    {
+      "level_id": 5,
+      "first_row": 172,
+      "end_row": 312,
+      "palette": "forest"
+    },
+    {
+      "level_id": 5,
+      "first_row": 312,
+      "end_row": 372,
+      "palette": "massif_fantasy"
+    },
+    {
+      "level_id": 5,
+      "first_row": 372,
       "end_row": 65535,
       "palette": "hills"
     }
@@ -171,7 +252,7 @@
             "trunk_side",
             "trunk_top"
           ],
-          "flags": 0
+          "flags": 4
         },
         {
           "bounds": [
@@ -181,22 +262,6 @@
             224,
             96,
             256
-          ],
-          "colors": [
-            "leaf_front",
-            "leaf_side",
-            "leaf_top"
-          ],
-          "flags": 0
-        },
-        {
-          "bounds": [
-            56,
-            56,
-            144,
-            144,
-            256,
-            384
           ],
           "colors": [
             "leaf_front",

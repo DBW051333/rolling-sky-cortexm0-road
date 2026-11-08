@@ -8,21 +8,17 @@ typedef struct {
     uint16_t short_pad,air_front,air_side,air_top;
     uint8_t solid_model,backdrop,air_model,ground_model;
 } Appearance;
-#define ART_CACHE_ADDRESS 0x00006200u
-#define ART_CACHE_BYTES 7680u
+#define ART_CACHE_ADDRESS 0x00007000u
+#define ART_CACHE_BYTES 4096u
 typedef struct {
     int16_t x,z,width,depth,bottom,top;
     uint8_t front,side,roof,flags;
 } ArtBox;
 typedef struct { uint16_t count,reserved; ArtBox boxes[4]; } ArtModel;
-typedef struct {
-    const uint16_t *palette,*offsets;
-    const uint8_t *runs;
-    unsigned height,bottom;
-} ArtBackground;
 extern volatile unsigned art_sd_loaded;
 void appearance_load(int card);
 const ArtModel *appearance_model(unsigned index);
-const ArtBackground *appearance_background(void);
 const Appearance *appearance_for(const struct Level *level,unsigned row);
+unsigned appearance_cue_span(const struct Level *level,unsigned row,unsigned *first,unsigned *end);
+unsigned appearance_index(const Appearance *look);
 #endif

@@ -46,7 +46,9 @@ git pull --ff-only
 ./build-fpga.ps1
 ```
 
-该脚本先从美术源数据生成 `firmware/appearance_data.h` 和 `sd_payload/RSART.BIN`，再编译 Cortex-M0 固件，最后调用 TD 综合、布局布线并生成 bitstream。主要输出包括：
+该脚本先从美术源数据生成 `firmware/appearance_data.h` 和 `sd_payload/RSART.BIN`，再编译 Cortex-M0 固件，最后调用 TD 综合、布局布线并生成 bitstream。
+
+若 Windows 报「禁止运行脚本」而 `firmware/build.ps1` 却能运行，多半是该脚本从压缩包/网页落地时带了 `Zone.Identifier`：执行一次 `Unblock-File .\build-fpga.ps1`（或用 `Set-ExecutionPolicy -Scope Process RemoteSigned`）即可，不必改机器上的全局策略。主要输出包括：
 
 - `firmware/code.hex`：固件映像。
 - `td/rolling_road.bit`：FPGA 配置映像。
@@ -73,7 +75,7 @@ git pull --ff-only
 
 - `RSLEVELS.BIN`：关卡判定数据。生成源为 `levels/levels.json`；生成命令是 `python tools/make_sd_levels.py`。
 - `RSART.BIN`：背景、颜色配置、场景绑定和模型数据。生成源为 `levels/appearance.json` 与 `assets/hills-background.png`；生成命令是 `python tools/make_appearance.py`。该命令也会更新固件中的 `firmware/appearance_data.h`。
-- 无卡或判定包无法加载时，固件可使用 ROM 中的三关备用目录；但要获得当前四关 SD 目录和详细背景/模型，必须准备这两个文件。
+- 无卡或判定包无法加载时，固件可使用 ROM 中的三关备用目录；但要获得当前五关 SD 目录和详细背景/模型，必须准备这两个文件。
 - SD 接口支持 SDHC/FAT32，不支持 exFAT、FAT16、SDSC 或长文件名查找。不要把文件放进子目录。
 - `.BIN` 文件是生成物并被 Git 忽略。不要通过强制添加二进制包来代替提交 JSON、PNG 和生成器。
 
@@ -103,7 +105,14 @@ RSLEVELS.BIN  0EB27C02C3D7C344B6BCBD16CD23F7E758569CFC53F92C76C57EC961B494A1EE
 RSART.BIN     0874590DC02131CAB8253BD2F8215E8D49D7EEB6DEA569D015FB0D8CA0081371
 ```
 
-美术包大小为 7680 B。以上是 2026-10-16 验证记录中的文件值，不是本次在新协作者机器上重新生成/复核的结果。生成后若哈希不同，先不要覆盖 SD 卡上的现有文件；先确认检出的提交、`levels/levels.json`、`levels/appearance.json`、背景 PNG 和生成器版本一致。
+美术包大小为 5632 B。以上是 2026-10-16 验证记录中的文件值，不是本次在新协作者机器上重新生成/复核的结果。生成后若哈希不同，先不要覆盖 SD 卡上的现有文件；先确认检出的提交、`levels/levels.json`、`levels/appearance.json`、背景 PNG 和生成器版本一致。
+
+当前生成物（2026-11-01，含第 5 关 Massif 全关 519 行、原版取色与滑条全量程固件）：
+
+```text
+RSLEVELS.BIN  22528 B  sha256 8AFBDA399F5E8AAB5F2555E884C4D5EE450153F9E1871518237CC810B9A8B238
+RSART.BIN      5632 B  sha256 5E911C9D134923BE94A719DF3688DAC32C441E462AD8CE938A8E4ABBF553FD0C
+```
 
 向 SD 卡复制时请确认盘符后再操作，只把两个文件复制到根目录；安全弹出后插回板卡。开机后按 KEY4 重新读卡，右下角显示绿色 SD 表示关卡目录成功加载；随后用 KEY6/KEY14 选关、KEY8 开始。绿色 SD 只证明关卡目录加载，不足以证明美术包成功；需观察 Hills 背景/模型，或检查调试变量 `art_sd_loaded`。新包写入卡的历史源/目标哈希一致，但最新固件下载后重新插卡读取、显示及完整游玩仍需板上复核。
 
@@ -113,6 +122,7 @@ RSART.BIN     0874590DC02131CAB8253BD2F8215E8D49D7EEB6DEA569D015FB0D8CA0081371
 - KEY8：菜单开始；游戏中暂停/继续。
 - KEY4：菜单重新读 SD；游戏中重开当前关卡。
 - KEY12：游戏中返回选关页。
+- 直滑电位器：接 P2 的 3V3、GND 与任一 ADC 脚（丝印为 L10/M10/P11/M12/N12/P12/R16），小球跟随滑条绝对位置；按住 KEY6/KEY14 时按键优先。菜单左下 `A<n> <hex>` 显示固件选中的通道与 12 位读数（绿=自动接管、黄=手动、灰=行程不足）；菜单里按 KEY12 手动轮换通道，读数随滑条变化的那个即正确通道。
 - 关卡目录最多 24 项；关卡 ID 用于稳定绑定美术，不能把目录顺序当成美术 ID。
 
 具体关卡数据格式、硬件接口和限制见 `SD_CARD.md`、`MECHANICS.md`、`HILLS.md`。
@@ -169,7 +179,7 @@ RSART.BIN     0874590DC02131CAB8253BD2F8215E8D49D7EEB6DEA569D015FB0D8CA0081371
 
 - 仿真/基准源码未随仓库提供；如要让另一位开发者重跑历史性能结果，需要项目所有者另行提供并确认分享范围。
 - `sd_payload/*.BIN`、固件 `.hex`、FPGA `.bit`、TD 日志/报告均是本地生成物，不由 Git 管理。
-- ROM 有三关 fallback；当前四关目录通过 SD 包提供。完整 Hills 美术也需要 `RSART.BIN`。
+- ROM 有三关 fallback；当前五关目录通过 SD 包提供（05 Massif 仅存在于卡包）。完整 Hills 美术也需要 `RSART.BIN`。
 - 设计预算和生成器的静态 route/gate 检查不能证明状态空间唯一解、任意操作序列可通关或真实玩家体验。
 - LCD 每帧的像素与刷新表现、玻璃/障碍碰撞手感、长关连续游玩、SD 异常与热拔等仍需实体设备测试。
 - 详细的外设限制与未实现机制见 `SD_CARD.md`、`MECHANICS.md` 和 `LEVEL_DESIGN.md`。

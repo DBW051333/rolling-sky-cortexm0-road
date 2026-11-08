@@ -8,6 +8,8 @@ unsigned sd_levels_mount(void);
 int sd_art_load(uint8_t *target,unsigned capacity);
 unsigned sd_levels_count(void);
 unsigned sd_levels_id(unsigned index);
+unsigned sd_levels_format(void);
+unsigned sd_levels_mech_count(unsigned index);
 int sd_levels_begin(unsigned index,Road *road,uint32_t *camera);
 int sd_levels_prepare(Road *road,uint32_t camera);
 unsigned sd_levels_cell(uint32_t row,unsigned field);

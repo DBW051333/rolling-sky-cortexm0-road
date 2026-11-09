@@ -1,8 +1,9 @@
 #ifndef PLAYER_H
 #define PLAYER_H
 #include <stdint.h>
+#include "road.h"
 #define PLAYER_COUNT 8u
-#define BALL_LEFT 86
+#define BALL_LEFT ((ROAD_WIDTH-68)/2)
 #define BALL_TOP 158
 #define BALL_WIDTH 68
 #define BALL_HEIGHT 68

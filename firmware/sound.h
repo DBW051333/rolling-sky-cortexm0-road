@@ -3,10 +3,16 @@
 /* Master switch. 0 compiles the synthesiser out entirely: sound_init() only
  * clears CTRL so the PWM pin sits at zero (no hum, no buzz), and the other two
  * entry points become empty, so the frame costs nothing and the 1.2 kB of note
- * tables leave the image. Set back to 1 to restore music and effects -- nothing
- * else has to change, the level code keeps raising Road::sfx either way. */
+ * tables leave the image. Set back to 1 to restore audio (music additionally
+ * requires SOUND_BGM_ENABLED); the level code keeps raising Road::sfx either way. */
 #ifndef SOUND_ENABLED
 #define SOUND_ENABLED 1
+#endif
+/* Development default: mute the background score and drums, retain effects.
+ * Set to 1 and rebuild to restore the level BGM. SOUND_ENABLED remains the
+ * separate master switch for all audio. */
+#ifndef SOUND_BGM_ENABLED
+#define SOUND_BGM_ENABLED 0
 #endif
 /* Event ids carried in Road::sfx; the renderer never looks at them, main.c
  * drains the word once per frame. */

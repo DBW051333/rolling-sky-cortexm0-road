@@ -7,7 +7,7 @@ listed at the bottom (walls, mechanisms, backdrop art):
 
   depth[y]  = (19552-20y)*256 / (1248+12y)      road_init()
   scale[y]  = (1248+12y)*256 / 52               road_init()
-  screen x  = 120 + trunc(world_x_q8*scale/65536)   projected_x()
+  screen x  = W/2 + trunc(world_x_q8*scale/65536)   projected_x()
   screen y  = 56 + trunc(384*(48*256-5*depth)
                          / (12*depth+20*256))   projected_y()
   row       = (camera + depth) >> 8             draw()
@@ -32,9 +32,9 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-W, H = 240, 320
+W, H = 198, 320
 BALL_Y = 192
-BALL_LEFT, BALL_TOP, BALL_W, BALL_H = 86, 158, 68, 68
+BALL_LEFT, BALL_TOP, BALL_W, BALL_H = (W-68)//2, 158, 68, 68
 
 
 def rgb565(c):
@@ -51,7 +51,7 @@ def scale_at(y):
 
 def projected_x(wx_q8, sc):
     n = wx_q8 * sc
-    return 120 + (n >> 16 if n >= 0 else -((-n) >> 16))
+    return W//2 + (n >> 16 if n >= 0 else -((-n) >> 16))
 
 
 def projected_y(d):
@@ -129,7 +129,7 @@ def project(x, z, h):
     d = 12 * z + 20 * 256 - 5 * h
     if d == 0:
         d = 1
-    return (120 + tdiv(4992 * x, d), 56 + tdiv(384 * (48 * 256 - 5 * z - 12 * h), d))
+    return (W//2 + tdiv(4992 * x, d), 56 + tdiv(384 * (48 * 256 - 5 * z - 12 * h), d))
 
 
 def build_faces(level, look, models, camera, camera_x, depth_ball, z_ball,
@@ -399,8 +399,8 @@ def draw_gems(img, level, camera, camera_x, picked=0, look=None):
 # Mirror of the scene backdrop in road.c: a sky ramp, a two-layer horizon
 # silhouette built from a 32-entry height profile, and a void colour. Keep
 # the numbers identical or the picture stops predicting the panel.
-BD_COLS, BD_COL_W, BD_HORIZON, BD_BANDS = 30, 8, 100, 8
-BD_MOON_X, BD_RADIUS, BD_HOLE_R, BD_HOLE_DX = 216, 22, 19, -10
+BD_COLS, BD_COL_W, BD_HORIZON, BD_BANDS = (W+7)//8, 8, 100, 8
+BD_MOON_X, BD_RADIUS, BD_HOLE_R, BD_HOLE_DX = W-24, 22, 19, -10
 BD_PROFILES = {
     'hills': (40, 52, 66, 84, 96, 110, 124, 120, 104, 88, 74, 62, 54, 48, 44, 42,
               46, 58, 72, 86, 98, 92, 80, 70, 62, 56, 52, 48, 44, 42, 40, 38),
@@ -508,7 +508,7 @@ class Backdrop:
         if feat == BD_STARS and y < 64:
             h = (y * 2654435761) & 0xFFFFFFFF
             if not ((h >> 9) & 3):
-                sx = 6 + ((h >> 17) % 228)
+                sx = 6 + ((h >> 17) % (W-12))
                 if sx <= x < sx + 2:
                     return b['flare']
         return sky

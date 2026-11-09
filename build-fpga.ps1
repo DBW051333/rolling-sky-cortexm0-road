@@ -15,5 +15,11 @@ try {
     if($LASTEXITCODE -or (Select-String -Path build.log -Pattern '\bERROR:' -Quiet)){throw 'TD failed; inspect td/build.log'}
     $image=Get-Item rolling_road.bit -ErrorAction Stop
     if($image.LastWriteTime -lt $started){throw 'No fresh bitstream generated; inspect td/build.log'}
+    $timing=Get-Content rolling_road.timing -Raw -ErrorAction Stop
+    $summary=[regex]::Match($timing,'Timing violations:\s*(\d+) setup errors, and (\d+) hold errors')
+    if(-not $summary.Success){throw 'No timing summary; inspect td/rolling_road.timing'}
+    if([int]$summary.Groups[1].Value -or [int]$summary.Groups[2].Value){
+        throw "Timing failed: $($summary.Value); do not download this image"
+    }
     Write-Host "Generated: $($image.FullName)"
 } finally { Pop-Location }

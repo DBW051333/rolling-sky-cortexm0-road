@@ -12,7 +12,7 @@ module AHBlite_Decoder
     parameter Port2_en = 1,
     /************************/
 
-    /*LCD enable parameter*/
+    /*video enable parameter*/
     parameter Port3_en = 1
     /************************/
 )(
@@ -27,33 +27,33 @@ module AHBlite_Decoder
     /*RAMDATA OUTPUT SELECTION SIGNAL*/
     output wire P2_HSEL,
 
-    /*LCD OUTPUT SELECTION SIGNAL*/
-    output wire P3_HSEL       
+    /*video OUTPUT SELECTION SIGNAL*/
+    output wire P3_HSEL
 );
 
 //RAMCODE-----------------------------------
 
 //0x00000000-0x0000ffff
 /*Insert RAMCODE decoder code there*/
-assign P0_HSEL = (HADDR[31:16] == 16'h0000) ? Port0_en : 1'b0; 
+assign P0_HSEL = (HADDR[31:16] == 16'h0000) ? Port0_en : 1'b0;
 /***********************************/
 
 //RAMDATA-----------------------------
 
 //0X20000000-0X2000FFFF
 /*Insert RAMDATA decoder code there*/
-assign P1_HSEL = (HADDR[31:16] == 16'h2000) ? Port1_en : 1'b0; 
+assign P1_HSEL = (HADDR[31:16] == 16'h2000) ? Port1_en : 1'b0;
 /***********************************/
 
 //PERIPHRAL-----------------------------
 
 //0X40000000 key_data/key_clear
 /*Insert Keyboard decoder code there*/
-assign P2_HSEL = (HADDR[31:9] == 23'h200000) ? Port2_en : 1'b0; 
+assign P2_HSEL = (HADDR[31:9] == 23'h200000) ? Port2_en : 1'b0;
 /***********************************/
 
-//0X40050000 LCD 
-/*Insert LCD decoder code there*/
+//0X40050000 video
+/*Insert video decoder code there*/
 assign P3_HSEL = ((HADDR[31:16] == 16'h4005) || (HADDR[31:16] == 16'h4006) ||
                   (HADDR[31:16] == 16'h4007)) ? Port3_en : 1'b0;
 /***********************************/

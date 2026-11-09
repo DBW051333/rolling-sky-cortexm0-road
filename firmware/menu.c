@@ -20,14 +20,14 @@ static const uint8_t font[36][5]={
  {24,20,18,127,16},{39,69,69,69,57},{60,74,73,73,48},{1,113,9,5,3},
  {54,73,73,73,54},{6,73,73,41,30}
 };
-static void rect(int x,int y,int w,int h,uint16_t c) {
+static __attribute__((noinline)) void rect(int x,int y,int w,int h,uint16_t c) {
     int end=x+w;
     if((int)row<y || (int)row>=y+h) return;
     if(x<0) x=0;
-    if(end>240) end=240;
+    if(end>ROAD_WIDTH) end=ROAD_WIDTH;
     while(x<end) pixels[x++]=c;
 }
-static void label(int x,unsigned y,const char *s,unsigned large,uint16_t c) {
+static __attribute__((noinline)) void label(int x,unsigned y,const char *s,unsigned large,uint16_t c) {
     unsigned dy,col;
     if(row<y || row>=y+(7u<<large)) return;
     dy=(row-y)>>large;
@@ -45,6 +45,7 @@ static void label(int x,unsigned y,const char *s,unsigned large,uint16_t c) {
 }
 static void number(int x,unsigned y,unsigned n,unsigned large,uint16_t c) {
     char s[4]; unsigned tens=0;
+    if(row<y || row>=y+(7u<<large)) return;
     if(n>99) n=99;
     /* Volatile keeps -Oz from synthesizing a freestanding EABI divide. */
     { volatile unsigned v=n; while(v>=10) { v-=10; tens++; } n=v; }
@@ -52,18 +53,18 @@ static void number(int x,unsigned y,unsigned n,unsigned large,uint16_t c) {
     label(x,y,s,large,c);
 }
 static void panel(unsigned top,unsigned height,uint16_t edge,int active) {
-    rect(10,(int)top,220,(int)height,PANEL);
-    rect(10,(int)top,220,1,edge);
+    rect(10,(int)top,ROAD_WIDTH-20,(int)height,PANEL);
+    rect(10,(int)top,ROAD_WIDTH-20,1,edge);
     rect(10,(int)top,2,(int)height,edge);
-    rect(10,(int)(top+height-1),220,1,active?edge:0x210cu);
-    rect(228,(int)top,2,(int)height,0x210cu);
+    rect(10,(int)(top+height-1),ROAD_WIDTH-20,1,active?edge:0x210cu);
+    rect(ROAD_WIDTH-12,(int)top,2,(int)height,0x210cu);
     rect(10,(int)top,5,3,0x0002u);
-    rect(225,(int)(top+height-3),5,3,0x0002u);
+    rect(ROAD_WIDTH-15,(int)(top+height-3),5,3,0x0002u);
 }
 static void city(uint32_t ticks) {
     unsigned i,x,t=ticks>>6;
     uint16_t base=row<70?0x0804u:row<142?0x1008u:0x0804u;
-    for(x=0;x<240;x++) pixels[x]=base;
+    for(x=0;x<ROAD_WIDTH;x++) pixels[x]=base;
     /* Slow skyline; a faster shop layer establishes parallax. All geometry
      * is pixel aligned, periodic and independent of menu selections. */
     if(row>=46 && row<142) for(i=0;i<9;i++) {
@@ -73,10 +74,14 @@ static void city(uint32_t ticks) {
         rect(bx,top,28,142-top,0x18cdu);
         rect(bx+3,top-6,2,6,0x29b1u);
         rect(bx+2,top,24,1,0x2933u);
-        for(x=0;x<3;x++) {
+        {
             unsigned wy;
-            for(wy=0;wy<5;wy++)
+            for(wy=0;wy<5;wy++) {
+                int window_y=top+6+(int)wy*10;
+                if((int)row<window_y || (int)row>=window_y+4) continue;
+                for(x=0;x<3;x++)
                 rect(bx+4+(int)x*8,top+6+(int)wy*10,3,4,((world+x+wy)&3)?0x3294u:0x6831u);
+            }
         }
     }
     if(row>=96 && row<180) for(i=0;i<5;i++) {
@@ -102,7 +107,7 @@ static void city(uint32_t ticks) {
         for(x=0;x<5;x++)
             rect(bx+8-(int)x*2,150+(int)x*7,24+(int)x*3,1,((x+t)&1)?0x2010u:0x0190u);
     }
-    rect(0,146,240,2,0x4976u);
+    rect(0,146,ROAD_WIDTH,2,0x4976u);
     /* Hover taxi with a cyan headlight, sweeping past the shop fronts. */
     if(row>=130 && row<=143) { int car=(int)((t*3)&511u)-80;
       rect(car+7,130,22,5,0x692fu); rect(car,135,38,8,0xb177u);
@@ -114,9 +119,9 @@ static void city(uint32_t ticks) {
         rect(rx,ry,1,4,0x3215u);
     }
     /* Road-edge lane lights continue scrolling below the cards. */
-    for(i=0;i<7;i++) {
+    if(row>=154) for(i=0;i<7;i++) {
         int y=154+(int)i*28+(int)((t*2)&15u);
-        rect(2,y,4,10,0x0354u); rect(234,y,4,10,0x780fu);
+        rect(2,y,4,10,0x0354u); rect(ROAD_WIDTH-6,y,4,10,0x780fu);
     }
 }
 void menu_draw(const MenuState *s,uint32_t ticks,const RoadSink *sink) {
@@ -126,7 +131,7 @@ void menu_draw(const MenuState *s,uint32_t ticks,const RoadSink *sink) {
     for(row=0;row<320;row++) {
         city(ticks);
         label(12,9,"NEON DISTRICT",0,CYAN);
-        label(184,9,"ONLINE",0,PINK);
+        label(ROAD_WIDTH-48,9,"ONLINE",0,PINK);
         label(19,28,"ROLLING",1,0x6013u);
         label(17,26,"ROLLING",1,WHITE);
         label(17,46,"SKY",1,CYAN);
@@ -134,41 +139,41 @@ void menu_draw(const MenuState *s,uint32_t ticks,const RoadSink *sink) {
         rect(17,65,50,2,CYAN); rect(69,65,24,2,PINK);
         panel(153,43,s->focus?0x3993u:CYAN,!s->focus);
         label(22,161,s->focus?"LEVEL":"LEVEL <    >",0,s->focus?MUTED:CYAN);
-        number(164,164,s->selected+1,1,WHITE);
-        label(108,165,s->level_id==4?"HILLS":s->level_id==5?"MASSIF":"",0,MUTED);
+        number(ROAD_WIDTH-38,164,s->selected+1,1,WHITE);
+        label(98,165,s->level_id==4?"HILLS":s->level_id==5?"MASSIF":"",0,MUTED);
         label(22,180,"BEST",0,MUTED); number(52,180,s->best,0,WHITE);
         label(76,180,"GEMS",0,MUTED); number(106,180,s->gems,0,WHITE);
-        number(202,180,s->total,0,MUTED);
+        number(ROAD_WIDTH-38,180,s->total,0,MUTED);
         panel(205,77,s->focus?PINK:0x3993u,s->focus);
         label(22,215,s->focus?"SKIN <    >":"SKIN",0,s->focus?PINK:MUTED);
-        label(22,238,player_name(),0,WHITE);
-        number(22,255,player_selected()+1,0,CYAN);
-        label(40,255,"OF 08",0,MUTED);
-        label(22,269,player_selected()<4?"CHROME SERIES":"AI MUSES",0,PINK);
+        label(22,235,player_name(),0,WHITE);
+        number(22,251,player_selected()+1,0,CYAN);
+        label(40,251,"OF 08",0,MUTED);
+        label(22,269,player_selected()<4?"CHROME":"AI MUSES",0,PINK);
         /* Actual game sprite at its native size, with a subtle scan pedestal. */
-        rect(150,276,68,2,0x3a39u);
+        rect(ROAD_WIDTH-84,276,68,2,0x3a39u);
         if(row>=209 && row<277) {
-            unsigned n,i,pos=150; const uint8_t *runs=player_row(row-209,&n);
+            unsigned n,i,pos=ROAD_WIDTH-84; const uint8_t *runs=player_row(row-209,&n);
             for(i=0;i<n;i++) {
                 unsigned len=runs[i]>>3,index=runs[i]&7u;
                 if(index) rect((int)pos,(int)row,(int)len,1,palette[index]);
                 pos+=len;
             }
         }
-        label(16,291,"2 SELECT",0,CYAN);
-        label(130,291,s->focus?"8 APPLY":"8 PLAY",0,PINK);
-        label(12,307,"A",0,MUTED); number(18,307,s->adc+1,0,MUTED);
-        number(36,307,s->percent,0,s->live?(s->manual?0xffe0u:CYAN):MUTED);
-        label(68,307,"VOL",0,MUTED); number(92,307,s->volume,0,CYAN);
+        label(12,285,"2 SELECT",0,CYAN);
+        label(ROAD_WIDTH-70,285,s->focus?"8 APPLY":"8 PLAY",0,PINK);
+        label(12,298,"A",0,MUTED); number(18,298,s->adc+1,0,MUTED);
+        number(36,298,s->percent,0,s->live?(s->manual?0xffe0u:CYAN):MUTED);
+        label(72,298,"VOL",0,MUTED); number(96,298,s->volume,0,CYAN);
         if(s->card) {
-            label(120,307,"V",0,MUTED); number(126,307,s->revision,0,CYAN);
-            label(156,307,"M",0,MUTED); number(162,307,s->mechs,0,CYAN);
+            label(12,309,"V",0,MUTED); number(18,309,s->revision,0,CYAN);
+            label(48,309,"M",0,MUTED); number(54,309,s->mechs,0,CYAN);
         }
-        label(208,307,s->card?"SD":"ROM",0,s->error?0xf800u:s->card?CYAN:WHITE);
-        sink->begin_line(0,row,240,sink->context);
-        for(x=0;x<240;) {
+        label(ROAD_WIDTH-36,309,s->card?"SD":"ROM",0,s->error?0xf800u:s->card?CYAN:WHITE);
+        sink->begin_line(0,row,ROAD_WIDTH,sink->context);
+        for(x=0;x<ROAD_WIDTH;) {
             unsigned end=x+1; uint16_t color=pixels[x];
-            while(end<240 && pixels[end]==color) end++;
+            while(end<ROAD_WIDTH && pixels[end]==color) end++;
             sink->span(end-x,color,sink->context); x=end;
         }
     }

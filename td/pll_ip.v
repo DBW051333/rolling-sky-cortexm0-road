@@ -16,18 +16,26 @@
 //	Clock information:
 //		Clock name	| Frequency 	| Phase shift
 //		C0        	| 32.000000 MHZ	| 0  DEG
+// CPU PLL: 800 MHz VCO /25. Video PLL: 742.857143 MHz VCO,
+// /10 pixels = 74.285714 MHz; /2 DDR = 371.428571 MHz.
 ///////////////////////////////////////////////////////////////////////////////
 `timescale 1 ns / 100 fs
 
 module pll_ip (
   refclk,
   reset,
-  clk0_out
+  clk0_out,
+  pixel_clk,
+  serial_clk,
+  locked
 );
 
   input refclk;
   input reset;
   output clk0_out;
+  output pixel_clk, serial_clk, locked;
+  wire cpu_locked, video_locked;
+  assign locked=cpu_locked & video_locked;
 
 
   EG_PHY_PLL #(
@@ -49,12 +57,20 @@ module pll_ip (
     .CLKC0_ENABLE("ENABLE"),
     .CLKC0_DIV(25),
     .CLKC0_CPHASE(24),
-    .CLKC0_FPHASE(0)
+    .CLKC0_FPHASE(0),
+    .CLKC1_ENABLE("DISABLE"),
+    .CLKC1_DIV(20),
+    .CLKC1_CPHASE(19),
+    .CLKC1_FPHASE(0),
+    .CLKC2_ENABLE("DISABLE"),
+    .CLKC2_DIV(4),
+    .CLKC2_CPHASE(3),
+    .CLKC2_FPHASE(0)
   ) pll_inst (
     .refclk(refclk),
     .reset(reset),
     .stdby(1'b0),
-    .extlock(open),
+    .extlock(cpu_locked),
     .load_reg(1'b0),
     .psclk(1'b0),
     .psdown(1'b0),
@@ -69,6 +85,25 @@ module pll_ip (
     .do({open, open, open, open, open, open, open, open}),
     .fbclk(1'b0),
     .clkc({open, open, open, open, clk0_out})
+  );
+
+  // Integer divider approximation to 74.25 MHz: +0.0481%, within CEA's
+  // 0.5% pixel-clock tolerance. Pixel and serial clocks share one VCO.
+  EG_PHY_PLL #(
+    .DPHASE_SOURCE("DISABLE"), .DYNCFG("DISABLE"), .FIN("50.000"),
+    .FEEDBK_MODE("NOCOMP"), .FEEDBK_PATH("VCO_PHASE_0"),
+    .STDBY_ENABLE("DISABLE"), .PLLRST_ENA("ENABLE"), .SYNC_ENABLE("DISABLE"),
+    .GMC_GAIN(4), .ICP_CURRENT(13), .KVCO(4),
+    .LPF_CAPACITOR(1), .LPF_RESISTOR(4),
+    .REFCLK_DIV(7), .FBCLK_DIV(104),
+    .CLKC0_ENABLE("ENABLE"), .CLKC0_DIV(10), .CLKC0_CPHASE(9), .CLKC0_FPHASE(0),
+    .CLKC1_ENABLE("ENABLE"), .CLKC1_DIV(2), .CLKC1_CPHASE(1), .CLKC1_FPHASE(0)
+  ) video_pll_inst (
+    .refclk(refclk), .reset(reset), .stdby(1'b0), .extlock(video_locked),
+    .load_reg(1'b0), .psclk(1'b0), .psdown(1'b0), .psstep(1'b0),
+    .psclksel(3'b000), .psdone(), .dclk(1'b0), .dcs(1'b0), .dwe(1'b0),
+    .di(8'd0), .daddr(6'd0), .do(), .fbclk(1'b0),
+    .clkc({open,open,open,serial_clk,pixel_clk})
   );
 
 endmodule

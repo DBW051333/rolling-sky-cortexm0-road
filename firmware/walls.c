@@ -37,7 +37,7 @@ static int quotient(int n,int d) {
 static __attribute__((noinline)) Point project(int x,int z,int h) {
     int d=12*z+20*256-5*h;
     Point p;
-    p.x=(int16_t)(120+quotient(4992*x,d));
+    p.x=(int16_t)(ROAD_WIDTH/2+quotient(4992*x,d));
     p.y=(int16_t)(56+quotient(384*(48*256-5*z-12*h),d));
     return p;
 }

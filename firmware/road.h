@@ -3,12 +3,12 @@
 #include <stdint.h>
 #define ROAD_COLS 5
 #define ROAD_ROWS 16
-#define ROAD_WIDTH 240
+#define ROAD_WIDTH 198
 #define ROAD_HEIGHT 320
 #define ROAD_FIRST_Y 0
 #define ROAD_LINES ROAD_HEIGHT
 /* Fixed pitched camera: sin=5/13, cos=12/13; focal=384, height=4,
- * principal point=(120,56). One world tile is 256 Q8 units.
+ * principal point=(ROAD_WIDTH/2,56). One world tile is 256 Q8 units.
  * This gives 24 px/tile at top, 97.615 px/tile at bottom,
  * and 13.07 world rows across the screen height. */
 #define ROAD_BG 0x0843u

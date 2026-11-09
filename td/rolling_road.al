@@ -10,6 +10,22 @@
     </HardWare>
     <Source_Files>
         <Verilog>
+            <File Path="../rtl/hdmi_game.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="20"/>
+                </FileInfo>
+            </File>
+            <File Path="../rtl/hdmi_test.v">
+                <FileInfo>
+                    <Attr Name="UsedInSyn" Val="true"/>
+                    <Attr Name="UsedInP&R" Val="true"/>
+                    <Attr Name="BelongTo" Val="design_1"/>
+                    <Attr Name="CompileOrder" Val="19"/>
+                </FileInfo>
+            </File>
             <File Path="../rtl/AHBlite_Block_RAM.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true"/>
@@ -42,7 +58,7 @@
                     <Attr Name="CompileOrder" Val="5"/>
                 </FileInfo>
             </File>
-            <File Path="../rtl/AHBlite_LCD.v">
+            <File Path="../rtl/AHBlite_Video.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true"/>
                     <Attr Name="UsedInP&R" Val="true"/>

@@ -24,7 +24,7 @@ static unsigned wall_active,wall_cursor,ball_hidden,ball_red;
  * column than to carry 38400 pixels: the whole backdrop costs 2.3 kB of
  * code and nothing per frame beyond sixty texture lookups.
  * --------------------------------------------------------------------- */
-#define BD_COLS 30
+#define BD_COLS ((ROAD_WIDTH+7)/8)
 #define BD_COL_W 8
 #define BD_STEP 256
 #define BD_HORIZON 100
@@ -36,7 +36,7 @@ enum { BD_PLAIN=0, BD_DISC=1, BD_CRESCENT=2, BD_STARS=3, BD_AURORA=4 };
 /* The moon sits in the upper right corner on purpose: the road's distant rows
  * project above the horizon and cover the middle of the screen, so a moon at
  * x=120 was sliced in half by the road and read as an abstract blob. */
-#define BD_MOON_X 216
+#define BD_MOON_X (ROAD_WIDTH-24)
 #define BD_RADIUS 22
 #define BD_HOLE_R 19
 #define BD_HOLE_DX (-10)
@@ -126,8 +126,8 @@ static void backdrop_prepare(unsigned scene,uint32_t travel_q8,unsigned second) 
     }
     /* Seed the run table with "sky everywhere". Without this the table starts
      * empty, every column is already at level 0 so nothing is ever dirty, and
-     * the whole stretch above the skyline paints no pixels at all -- the LCD
-     * address pointer then runs a few hundred pixels short per frame and the
+     * the whole stretch above the skyline paints no pixels at all -- the frame
+     * write cursor then runs a few hundred pixels short per frame and the
      * picture is displaced by a different amount every frame. */
     bd_runs=1;
     bd_run_x[0]=0;
@@ -136,7 +136,7 @@ static void backdrop_prepare(unsigned scene,uint32_t travel_q8,unsigned second) 
 }
 
 /* A scanline is assembled in RAM only when an overlay shares it with the
- * road. Every other line still streams straight to the LCD, so the HUD and
+ * road. Every other line still streams straight to the framebuffer, so the HUD and
  * the gems cost no extra stores and, more importantly, no second write. */
 static const RoadSink *line_sink;
 static int line_buffered;
@@ -258,7 +258,7 @@ static void ball_segment(int left,int right,uint16_t color,unsigned y,
     if(right>BALL_LEFT+BALL_WIDTH) put(left>BALL_LEFT+BALL_WIDTH?left:BALL_LEFT+BALL_WIDTH,right,color);
 }
 /* Merge the one-line wall layer before compositing the ball. Each screen
- * pixel still reaches the LCD exactly once, regardless of polygon overlap. */
+ * pixel still reaches the framebuffer exactly once, regardless of polygon overlap. */
 static void composite_segment(int left,int right,uint16_t color,unsigned y,unsigned background) {
     int start;
     if(left<0) left=0;
@@ -347,7 +347,7 @@ static void backdrop_line(int left,int right,unsigned y) {
     }
     if(b->feature==BD_STARS && y<64u) {
         unsigned h=y*2654435761u;
-        if(!((h>>9)&3u)) { int sx=6+(int)((h>>17)%228u); mx0=sx; mx1=sx+2; }
+        if(!((h>>9)&3u)) { int sx=6+(int)((h>>17)%(ROAD_WIDTH-12u)); mx0=sx; mx1=sx+2; }
     }
     for(i=0;i<bd_runs;i++) {
         int a=bd_run_x[i],e=bd_run_x[i+1];

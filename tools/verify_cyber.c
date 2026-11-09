@@ -11,32 +11,32 @@
 Level sd_level;
 unsigned sd_levels_cell(uint32_t row,unsigned field) { (void)row;(void)field;return 0; }
 int sd_art_load(uint8_t *target,unsigned capacity) { (void)target;(void)capacity;return 0; }
-static uint16_t frame[320][240];
+static uint16_t frame[ROAD_HEIGHT][ROAD_WIDTH];
 static unsigned rows,x,count;
 static uint32_t hash;
 static void begin(unsigned left,unsigned y,unsigned n,void *ctx) {
-    (void)ctx; assert(left==0 && y==rows && n==240 && (!rows || x==240));
+    (void)ctx; assert(left==0 && y==rows && n==ROAD_WIDTH && (!rows || x==ROAD_WIDTH));
     rows++; x=0;
 }
 static void span(unsigned n,uint16_t c,void *ctx) {
-    (void)ctx; assert(rows && n && x+n<=240);
+    (void)ctx; assert(rows && n && x+n<=ROAD_WIDTH);
     count+=n;
     while(n--) { frame[rows-1][x++]=c; hash=(hash^c)*16777619u; }
 }
 static void reset(void) { rows=x=count=0; hash=2166136261u; }
-static void complete(void) { assert(rows==320 && x==240 && count==76800); }
+static void complete(void) { assert(rows==ROAD_HEIGHT && x==ROAD_WIDTH && count==ROAD_WIDTH*ROAD_HEIGHT); }
 static void save(const char *dir,const char *kind,unsigned skin,unsigned t) {
     char path[512]; FILE *f;
     if(!dir) return;
     snprintf(path,sizeof(path),"%s/%s-%u-%u.rgb565",dir,kind,skin,t);
-    f=fopen(path,"wb"); assert(f); assert(fwrite(frame,2,76800,f)==76800); fclose(f);
+    f=fopen(path,"wb"); assert(f); assert(fwrite(frame,2,ROAD_WIDTH*ROAD_HEIGHT,f)==ROAD_WIDTH*ROAD_HEIGHT); fclose(f);
 }
 static void check_sprite(int lift,int red,int hidden) {
     const uint16_t *palette=player_colors(); unsigned y;
     if(hidden) return;
     for(y=0;y<68;y++) {
-        unsigned n,i,pos=86; const uint8_t *runs=player_row(y,&n);
-        int sy=158+(int)y-lift;
+        unsigned n,i,pos=BALL_LEFT; const uint8_t *runs=player_row(y,&n);
+        int sy=BALL_TOP+(int)y-lift;
         for(i=0;i<n;i++) {
             unsigned end=pos+(runs[i]>>3),index=runs[i]&7u;
             if(index && sy>=20 && sy<320) {
@@ -106,6 +106,6 @@ int main(int argc,char **argv) {
     for(i=0;i<32;i++) {
         reset();menu_draw(&state,i*128,&sink);complete();save(dir,"motion",4,i);
     }
-    printf("PASS: 8 skins, 544 RLE rows, 64 animated menus (SD/ROM/error), 40 sprite-state frames, %u projection frames; 76800 pixels/frame\n",total);
+    printf("PASS: 8 skins, 544 RLE rows, 64 animated menus (SD/ROM/error), 40 sprite-state frames, %u projection frames; 63360 pixels/frame\n",total);
     return 0;
 }

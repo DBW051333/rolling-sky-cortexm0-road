@@ -6,6 +6,7 @@
 #include "player.h"
 #include "appearance.h"
 #include "sound.h"
+#include "frame_clock.h"
 #define REG(a) (*(volatile uint32_t *)(a))
 #define KEY REG(0x40000000)
 #define KEY_HELD REG(0x40000004)
@@ -13,13 +14,9 @@
  * ADC. Channels 1..7 are the seven ADC pins on that socket; the keyboard
  * peripheral exports them at 0x008 + 4*(channel-1). */
 #define ADC_LEVEL(ch) REG(0x40000008u+4u*((ch)-1u))
-#define CS REG(0x40050000)
-#define RS REG(0x40050004)
-#define WR REG(0x40050008)
-#define RD REG(0x4005000c)
-#define RESET REG(0x40050010)
-#define BACKLIGHT REG(0x40050014)
-#define PIXEL REG(0x40050060)
+#define VIDEO_X REG(0x40050000)
+#define VIDEO_Y REG(0x40050004)
+#define VIDEO_BEGIN REG(0x40050008)
 #define SPAN_COLOR REG(0x40050080)
 #define SPAN_COUNT REG(0x40050084)
 #define SPAN_STATUS REG(0x40050088)
@@ -35,26 +32,20 @@ void road_baseline_frame(uint32_t,int,void (*)(unsigned,unsigned,unsigned,void*)
 void tick_isr(void) { milliseconds++; }
 void key_isr(void) { key_events|=KEY; KEY=1; }
 void uart_isr(void) { REG(0x40000108)=8; }
-static void wait_ms(uint32_t ms) {
-#ifdef ROAD_SIM_FAST_INIT
-    (void)ms; /* Only LCD power-on delays; render loops/pixel counts stay exact. */
-#else
-    uint32_t start=milliseconds;
-    while((uint32_t)(milliseconds-start)<ms) {}
-#endif
+/* Both menu and gameplay use the same 30 Hz budget. Slow frames continue
+ * immediately; elapsed-time simulation remains independent of rendering. */
+static void finish_frame(uint32_t start,unsigned *phase) {
+    unsigned budget=frame_period_ms(phase);
+    road_last_frame_ms=milliseconds-start; road_frame_count++;
+    while((uint32_t)(milliseconds-start)<budget) {}
 }
-static void write_lcd(uint16_t value,int is_command) {
-    CS=0; RS=is_command?0:1; PIXEL=value; WR=0;
-    __asm volatile("nop\nnop\nnop\nnop");
-    WR=1; CS=1;
-}
-static void command(uint16_t v) { write_lcd(v,1); }
-static void data(uint16_t v) { write_lcd(v,0); }
 static void window(unsigned x,unsigned y,unsigned w,unsigned h) {
-    unsigned right=x+w-1,bottom=y+h-1;
-    command(0x2a); data(x>>8); data(x&255); data(right>>8); data(right&255);
-    command(0x2b); data(y>>8); data(y&255); data(bottom>>8); data(bottom&255);
-    command(0x2c);
+    /* 198x320 composition: measured panel needs 10/11 horizontal correction.
+     * Keep the existing 240-byte RAM stride and center the active columns. */
+    x+=(240u-ROAD_WIDTH)/2u;
+    VIDEO_X=((x+w-1u)<<16)|x;
+    VIDEO_Y=((y+h-1u)<<16)|y;
+    VIDEO_BEGIN=1;
 }
 static void wait_span(void) { while(SPAN_STATUS&1u) {} }
 static void span(unsigned n,uint16_t color,void *context) {
@@ -67,7 +58,6 @@ static void begin_line(unsigned x,unsigned y,unsigned n,void *context) {
 static void fill(unsigned x,unsigned y,unsigned w,unsigned h,uint16_t color) {
     unsigned count=w*h;
     wait_span(); window(x,y,w,h);
-    if(count>65535) { span(38400,color,0); count-=38400; }
     span(count,color,0); wait_span();
 }
 /* ---- Slide-potentiometer input -------------------------------------------
@@ -185,10 +175,8 @@ static uint32_t hud_divide(uint32_t n,uint32_t d) {
     while(bit) { if(n>=d) { n-=d; q|=bit; } d>>=1; bit>>=1; }
     return q;
 }
-/* The enclosure mounts the panel upside down, so the raster is flipped in
- * hardware (MADCTL MX|MY). The controls have to be flipped with it: a sweep
- * that would have moved the ball left now has to move it right, otherwise
- * the picture and the hand disagree. Set this to 0 to undo both at once. */
+/* Retain the established enclosure/keypad orientation. HDMI rotation is
+ * handled separately by the scanout scaler. Set to 0 for factory controls. */
 #define INPUT_ROTATED 1
 /* The enclosure turned 180 degrees after the keypad was wired, so the key the
  * player sees on the left is the one the matrix calls KEY14. The pair is
@@ -300,10 +288,10 @@ static unsigned hud_pct(const Road *r,uint32_t camera) {
  * original shows on its result screen. */
 static void hud_result(void) {
     unsigned value=hud.pct,x;
-    hud_rect(84,6,72,14,0x0000u);
-    hud_gem_icon(88,8);
-    hud_number(97,8,hud.gems);
-    x=118;
+    hud_rect(ROAD_WIDTH/2-36,6,72,14,0x0000u);
+    hud_gem_icon(ROAD_WIDTH/2-32,8);
+    hud_number(ROAD_WIDTH/2-23,8,hud.gems);
+    x=ROAD_WIDTH/2-2;
     if(value>=100) { hud_digit(x,8,1); hud_digit(x+7,8,0); hud_digit(x+14,8,0); x+=21; }
     else { hud_number(x,8,value); x+=14; }
     hud_glyph(x,8,hud_pct_rows,0xffe0u,0x0000u);
@@ -317,8 +305,8 @@ static void hud_result(void) {
  * see-through track disappears into the disc. */
 static void hud_volume_bars(void) {
     unsigned w=hud.vol*4u;
-    hud_rect(196,8,39,6,0x0000u);
-    if(w) hud_rect(196,8,w-1,6,hud.vol>6u?0x07e0u:hud.vol>3u?0xffe0u:0xf800u);
+    hud_rect(ROAD_WIDTH-44,8,39,6,0x0000u);
+    if(w) hud_rect(ROAD_WIDTH-44,8,w-1,6,hud.vol>6u?0x07e0u:hud.vol>3u?0xffe0u:0xf800u);
 }
 /* One scanline of HUD: called by the road renderer while it still owns the
  * line, so the caller must have latched `hud` for this frame already. */
@@ -336,8 +324,8 @@ static void hud_overlay(uint16_t *pixels,unsigned y,void *context) {
         hud_counter(hud.gems);
         if(hud.state) hud_result();
         else if(hud.paused) {
-            hud_rect(111,8,5,12,0xffffu);
-            hud_rect(124,8,5,12,0xffffu);
+            hud_rect(ROAD_WIDTH/2-9,8,5,12,0xffffu);
+            hud_rect(ROAD_WIDTH/2+4,8,5,12,0xffffu);
         }
         if(hud.vol_show) hud_volume_bars();
     }
@@ -356,31 +344,9 @@ static void hud_latch(const Road *r,uint32_t camera,unsigned state,int paused) {
     hud.vol_show=(uint32_t)(milliseconds-vol_stamp)<1200u;
     hud.pct=state?hud_pct(r,camera):0u;
 }
-static void lcd_init(void) {
-    static const uint8_t config[]={
-        0xcf,3,0,0xc1,0x30, 0xed,4,0x64,3,0x12,0x81,
-        0xe8,3,0x85,0x10,0x7a, 0xcb,5,0x39,0x2c,0,0x34,2,
-        0xf7,1,0x20, 0xea,2,0,0, 0xc0,1,0x1b, 0xc1,1,1,
-        /* 0x08 portrait is 90 degrees CCW from the previous 0x68 landscape.
-         * MADCTL now sets MX and MY as well (0xc8), which flips both address
-         * axes: the whole raster comes out rotated 180 degrees for the
-         * enclosure, at no cost and with no change to any drawing code. */
-        0xc5,2,0x30,0x30, 0xc7,1,0xb7, 0x36,1,0xc8, 0x3a,1,0x55,
-        0xb1,2,0,0x1a, 0xb6,2,0x0a,0xa2, 0xf2,1,0, 0x26,1,1,
-        0xe0,15,0x0f,0x2a,0x28,8,0x0e,8,0x54,0xa9,0x43,0x0a,0x0f,0,0,0,0,
-        0xe1,15,0,0x15,0x17,7,0x11,6,0x2b,0x56,0x3c,5,0x10,0x0f,0x3f,0x3f,0x0f
-    };
-    unsigned i=0,n;
-    CS=1; RS=1; WR=1; RD=1; BACKLIGHT=0;
-    RESET=0; wait_ms(20); RESET=1; wait_ms(120);
-    command(1); wait_ms(150);
-    while(i<sizeof(config)) { command(config[i++]); n=config[i++]; while(n--) data(config[i++]); }
-    command(0x11); wait_ms(120); command(0x29); wait_ms(20);
-    window(0,0,ROAD_WIDTH,ROAD_HEIGHT);
-#ifndef ROAD_PROFILE
-    span(38400,ROAD_BG,0); span(38400,ROAD_BG,0); wait_span();
-#endif
-    BACKLIGHT=1;
+static void video_init(void) {
+    // Hardware clears the framebuffer once; no panel power-on protocol.
+    while(!(SPAN_STATUS&4u)) {}
 }
 /* Keep menu-only locals out of the gameplay stack. Pack the two boolean
  * flags above the five-bit card count so the call needs no stack arguments. */
@@ -406,10 +372,10 @@ static __attribute__((noinline)) void menu_paint(const RoadSink *sink,unsigned s
 int main(void) {
     /* Startup branches directly here; explicitly initialize mutable state. */
     uint32_t camera=0,last_time,frame_start,keys;
-    int paused=0,points=0,vol_changed=0;
+    int paused=0,points=0;
     unsigned state=GAME_RUNNING,selected=0,card_count=0,sd_error=0,focus=0;
-    int menu=1,menu_dirty=1;
-    uint32_t menu_stamp=0;
+    int menu=1;
+    unsigned frame_phase=0;
     const RoadSink sink={begin_line,span,0};
     milliseconds=0; key_events=0; road_frame_count=0; road_last_frame_ms=0; art_sd_loaded=0;
     player_select(0); menu_cached_level=255;
@@ -418,20 +384,30 @@ int main(void) {
     level_load(&road,&level_one,&camera);
     REG(0xe000e014)=31999; REG(0xe000e018)=0; REG(0xe000e010)=7;
     REG(0xe000e100)=1;
-    lcd_init(); sound_init(); last_time=milliseconds;
+    video_init(); sound_init(); last_time=milliseconds;
 #ifdef ROAD_PROFILE
     {
+#define PROFILE_MARK REG(0x4005008c)
         unsigned scene;
+        for(scene=0;scene<2;scene++) {
+            player_select(scene?4:0);
+            PROFILE_MARK=scene*4+17;
+            menu_paint(&sink,0,scene?64:0,1024);
+            wait_span();
+            PROFILE_MARK=scene*4+20;
+        }
+        player_select(0);
         for(scene=0;scene<2;scene++) {
             level_load(&road,&level_one,&camera);
             if(scene) camera=21*256-road.depth_q8[ROAD_BALL_Y]-256;
-            REG(0x20001800)=scene*4+1;
+            PROFILE_MARK=scene*4+1;
             (void)level_step(&road,&camera,0,33);
-            REG(0x20001800)=scene*4+2;
+            PROFILE_MARK=scene*4+2;
             road_draw(&road,camera,points,&sink); wait_span();
-            REG(0x20001800)=scene*4+4;
+            PROFILE_MARK=scene*4+4;
         }
         for(;;) {}
+#undef PROFILE_MARK
     }
 #endif
 #ifdef ROAD_BENCHMARK
@@ -455,56 +431,50 @@ int main(void) {
         __asm volatile("cpsie i" ::: "memory");
         adc_poll(); adc_select();
         /* The animated menu composites each pixel once, including volume. */
-        vol_changed=volume_keys(milliseconds);
+        (void)volume_keys(milliseconds);
         if(menu) {
-            if(vol_changed) menu_dirty=1;
-            if(keys&(1u<<2)) { focus^=1u; menu_dirty=1; }
+            if(keys&(1u<<2)) focus^=1u;
             if(keys&(1u<<4)) {
                 card_count=sd_levels_mount(); appearance_load(card_count!=0); sd_error=!card_count;
                 menu_cached_level=255;
-                selected=0; menu_dirty=1;
+                selected=0;
             }
-            if(keys&(1u<<12)) { adc_cycle(); menu_dirty=1; }
+            if(keys&(1u<<12)) adc_cycle();
             if((keys&(1u<<6)) && !(keys&(1u<<14))) {
                 if(focus) player_select(player_selected()?player_selected()-1:PLAYER_COUNT-1);
                 else if(selected) selected--;
-                menu_dirty=1;
             }
             if((keys&(1u<<14)) && !(keys&(1u<<6))) {
                 if(focus) player_select(player_selected()+1<PLAYER_COUNT?player_selected()+1:0);
                 else if(selected+1<(card_count?card_count:LEVEL_COUNT)) selected++;
-                menu_dirty=1;
             }
-            if((keys&(1u<<8)) && focus) { focus=0; menu_dirty=1; keys&=~(1u<<8); }
+            if((keys&(1u<<8)) && focus) { focus=0; keys&=~(1u<<8); }
             if(keys&(1u<<8)) {
                 if(!start_level(selected,card_count,&road,&camera)) {
-                    card_count=0; sd_error=1; selected=0; menu_dirty=1;
+                    card_count=0; sd_error=1; selected=0;
                     continue;
                 }
                 state=GAME_RUNNING; paused=0; menu=0; scored=0;
                 last_time=frame_start=milliseconds; keys=0;
             } else {
-                if(menu_dirty || (uint32_t)(milliseconds-menu_stamp)>=100u) {
-                    menu_paint(&sink,selected,card_count|(sd_error<<5)|(focus<<6),milliseconds);
-                    wait_span();
-                    menu_dirty=0; menu_stamp=frame_start;
-                }
+                menu_paint(&sink,selected,card_count|(sd_error<<5)|(focus<<6),milliseconds);
+                wait_span();
                 /* The menu has no music at all: the sequencer is told to
                  * stand down while the level picker is up, so the beat only
                  * exists while the road is moving. */
                 sound_frame((unsigned)(milliseconds-last_time),0);
                 last_time=milliseconds;
-                while((uint32_t)(milliseconds-frame_start)<10) {}
+                finish_frame(frame_start,&frame_phase);
                 continue;
             }
         } else if(keys&(1u<<12)) {
-            menu=1; menu_dirty=1;
+            menu=1;
             continue;
         }
         if(keys&(1u<<8)) paused=!paused;
         if(keys&(1u<<4)) {
             if(!start_level(selected,road.level==&sd_level,&road,&camera)) {
-                menu=1; menu_dirty=1; card_count=0; sd_error=1; selected=0;
+                menu=1; card_count=0; sd_error=1; selected=0;
                 continue;
             }
             state=GAME_RUNNING; paused=0; scored=0; last_time=frame_start;
@@ -540,7 +510,7 @@ int main(void) {
         sound_frame(frame_start-last_time,!paused && state==GAME_RUNNING);
         last_time=frame_start;
         if(road.level==&sd_level && !sd_levels_prepare(&road,camera)) {
-            menu=1; menu_dirty=1; card_count=0; sd_error=1; selected=0;
+            menu=1; card_count=0; sd_error=1; selected=0;
             continue;
         }
         /* Latch the HUD for this frame, then let one road draw carry both the
@@ -557,7 +527,6 @@ int main(void) {
             }
         }
         road_draw(&road,camera,points,&sink); wait_span();
-        road_last_frame_ms=milliseconds-frame_start; road_frame_count++;
-        while((uint32_t)(milliseconds-frame_start)<33) {}
+        finish_frame(frame_start,&frame_phase);
     }
 }

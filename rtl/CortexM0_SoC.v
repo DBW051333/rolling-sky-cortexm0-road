@@ -11,16 +11,13 @@ module CortexM0_SoC #(parameter CODE_FILE = "../firmware/code.hex") (
         output      wire    [3:0]   row,
         //input       wire   [15:0]  key_pulse,
 
-        output      wire            LCD_CS,
-        output      wire            LCD_RS,
-        output      wire            LCD_WR,
-        output      wire            LCD_RD,
-        output      wire            LCD_RST,
-        output      wire    [15:0]  LCD_DATA,
+        output wire video_we,
+        output wire [16:0] video_addr,
+        output wire [7:0] video_data,
+        input wire video_ready,
         output wire SD_CLK,SD_CS,SD_MOSI,
         input wire SD_MISO,
-        output wire audio_pwm,
-        output      wire            LCD_BL_CTR
+        output wire audio_pwm
               
 );
 
@@ -42,7 +39,6 @@ assign SWDIO = (SWDOEN) ?  SWDO : 1'bz;
 wire [31:0] IRQ;
 wire key_interrupt;
 wire uart_interrupt;
-wire LCD_INI_FINISH;
 /*Connect the IRQ with keyboard*/
 assign IRQ = {30'd0,uart_interrupt,key_interrupt};
 /***************************/
@@ -383,23 +379,9 @@ AHBlite_Key_UART Keyboard_Interface(
 );
 
 //------------------------------------------------------------------------------
-// AHB LCD
-//------------------------------------------------------------------------------
-
-wire            LCD_CS_run;
-wire            LCD_RS_run;
-wire            LCD_WR_run;
-wire            LCD_RD_run;
-wire            LCD_RST_run;
-wire   [15:0]   LCD_DATA_run;
-wire            LCD_BL_CTR_run;
-
-wire     LCD_INI_en;
-wire     LCD_MODE;
-
-// Port 3 sub-decodes LCD 0x4005xxxx and SD SPI 0x4006xxxx.
-wire [31:0] lcd_read,sd_read,audio_read;
-wire lcd_ready,lcd_resp;
+// AHB video / SD / audio
+// Port 3 sub-decodes video 0x4005xxxx and SD SPI 0x4006xxxx.
+wire [31:0] video_read,sd_read,audio_read;
 reg sd_response,audio_response;
 wire audio_hsel = HSEL_P3 && HADDR_P3[31:16]==16'h4007;
 always @(posedge clk or negedge cpuresetn)
@@ -408,7 +390,7 @@ always @(posedge clk or negedge cpuresetn)
 always @(posedge clk or negedge cpuresetn)
     if(!cpuresetn) audio_response<=0;
     else if(HREADY_P3) audio_response<=audio_hsel && HTRANS_P3[1] && !HWRITE_P3;
-assign HRDATA_P3=audio_response?audio_read:sd_response?sd_read:lcd_read;
+assign HRDATA_P3=audio_response?audio_read:sd_response?sd_read:video_read;
 assign HREADYOUT_P3=1'b1;
 assign HRESP_P3=1'b0;
 AHBlite_SD SD_Interface(
@@ -422,34 +404,12 @@ audio_synth Audio(
     .HWRITE(HWRITE_P3),.HREADY(HREADY_P3),.HADDR(HADDR_P3),.HWDATA(HWDATA_P3),
     .HTRANS(HTRANS_P3),.HSIZE(HSIZE_P3),.HREADYOUT(),.HRESP(),
     .HRDATA(audio_read),.audio_pwm(audio_pwm));
-AHBlite_LCD LCD_Interface(
-        /* Connect to Interconnect Port 3 */
-        .HCLK           (clk),
-        .HRESETn        (cpuresetn),
-        .HSEL           (HSEL_P3 && HADDR_P3[31:16]==16'h4005),
-        .HADDR          (HADDR_P3),
-        .HTRANS         (HTRANS_P3),
-        .HSIZE          (HSIZE_P3),
-        .HPROT          (HPROT_P3),
-        .HWRITE         (HWRITE_P3),
-        .HWDATA         (HWDATA_P3),
-        .HREADY         (HREADY_P3),
-        .HREADYOUT      (lcd_ready),
-        .HRDATA         (lcd_read),
-        .HRESP          (lcd_resp),
-
-        .LCD_CS         (LCD_CS_run),
-        .LCD_RS         (LCD_RS_run),
-        .LCD_WR         (LCD_WR_run),
-        .LCD_RD         (LCD_RD_run),
-        .LCD_RST        (LCD_RST_run),
-        .LCD_DATA       (LCD_DATA_run),
-        .LCD_BL_CTR     (LCD_BL_CTR_run),
-
-        .LCD_INI_en     (LCD_INI_en),
-        .LCD_MODE       (LCD_MODE)
-        /**********************************/ 
-);
+AHBlite_Video Video_Interface(
+    .HCLK(clk),.HRESETn(cpuresetn),
+    .HSEL(HSEL_P3 && HADDR_P3[31:16]==16'h4005),
+    .HADDR(HADDR_P3),.HTRANS(HTRANS_P3),.HSIZE(HSIZE_P3),
+    .HWRITE(HWRITE_P3),.HWDATA(HWDATA_P3),.HREADY(HREADY_P3),.HRDATA(video_read),
+    .framebuffer_ready(video_ready),.write_en(video_we),.write_addr(video_addr),.write_data(video_data));
 
 //------------------------------------------------------------------------------
 // RAM
@@ -488,17 +448,5 @@ Keyboard Keyboard(
         ,.key_held(key_held)
 );
 
-//------------------------------------------------------------------------------
-// LCD
-//------------------------------------------------------------------------------
-
-// Software initializes the LCD through the same AHB registers used for drawing.
-assign LCD_CS = LCD_CS_run;
-assign LCD_RST = LCD_RST_run;
-assign LCD_RS = LCD_RS_run;
-assign LCD_WR = LCD_WR_run;
-assign LCD_RD = LCD_RD_run;
-assign LCD_DATA = LCD_DATA_run;
-assign LCD_BL_CTR = LCD_BL_CTR_run;
 endmodule
 

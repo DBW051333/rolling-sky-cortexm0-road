@@ -1,4 +1,4 @@
-"""Original 17x17 AI-inspired chibis; 4x nearest-neighbour on the LCD.
+"""Original 17x17 AI-inspired chibis; 4x nearest-neighbour in the game framebuffer.
 
 Palette: transparent, outline, shade, hair, highlight, skin, white, accent.
 These are original theme designs, not official mascots or copied fan art.

@@ -3,7 +3,7 @@
 
 #if SOUND_ENABLED
 /* Four-voice synth in rtl/audio_synth.v, reached through the same AHB port as
- * the LCD and the card reader (0x4007xxxx). The CPU never feeds samples: it
+ * video and the card reader (0x4007xxxx). The CPU never feeds samples: it
  * writes a note and walks away, and the FPGA keeps the phase running at
  * 31.25 kHz. That is the only way this fits -- the renderer already uses most
  * of a 33 ms frame.
@@ -30,6 +30,7 @@ static const uint16_t note_inc[60]={
     8778,9300,9853,10439,11060,11718,12414,13153,13935,14763,15641,16572,
     17557,18601,19707,20879,22120,23436,24829,26306,27870,29527,31283,33143,
 };
+#if SOUND_BGM_ENABLED
 /* Eight bars of A minor, four bars per pass: Am, F, C, G. The lead keeps to
  * the pentatonic so the arpeggio underneath can move without clashing. */
 static const uint8_t lead[64]={
@@ -54,7 +55,9 @@ static const uint8_t arp[64]={
  * every 10 ms and gameplay every 33, and a 16th note must not speed up four
  * times over just because the screen is idle. */
 #define STEP_MS 99u
-static unsigned step,step_ms,v3_ms;
+static unsigned step,step_ms;
+#endif
+static unsigned v3_ms;
 /* Master volume. Scaling happens on the way into the CTL word, so the mix
  * keeps its shape: the lead, the bass and the arp all drop by the same
  * factor instead of the quietest voice disappearing first (which is what a
@@ -83,11 +86,13 @@ static unsigned pitch(unsigned note) {
 }
 /* A resting voice is gated off rather than left at volume zero, so the phase
  * stops advancing and a note always starts from the top of its waveform. */
+#if SOUND_BGM_ENABLED
 static void voice(unsigned index,unsigned note,unsigned wave,unsigned vol) {
     AU_VOICE(index,0)=pitch(note);
     AU_VOICE(index,1)=0;
     AU_VOICE(index,2)=note?wave|(scaled(vol)<<4)|256u:0u;
 }
+#endif
 /* Voice three carries the drums and every effect, since both are short bursts
  * with a pitch slide. Delta is in phase units per 31.25 kHz sample: a whole
  * semitone at 440 Hz is about 22,000, so these are deliberately small. */
@@ -103,7 +108,10 @@ void sound_init(void) {
     master=SOUND_VOLUME_MAX; scale_q8=256u;
     AU_CTRL=0;
     for(i=0;i<4u;i++) { AU_VOICE(i,0)=0; AU_VOICE(i,1)=0; AU_VOICE(i,2)=0; }
-    step=0; step_ms=0; v3_ms=0;
+#if SOUND_BGM_ENABLED
+    step=0; step_ms=0;
+#endif
+    v3_ms=0;
     AU_CTRL=1;
 }
 void sound_sfx(unsigned id) {
@@ -124,12 +132,15 @@ void sound_sfx(unsigned id) {
  * long as the menu stays up. Sound effects own voice three and are untouched,
  * so a death rattle or the clear jingle still lands on the result screen. */
 void sound_frame(unsigned ms,int advance) {
+#if SOUND_BGM_ENABLED
     unsigned s;
+#endif
     if(ms>200u) ms=200u;
     if(v3_ms) {
         if(ms>=v3_ms) { v3_ms=0; AU_VOICE(3,2)=0; }
         else v3_ms-=ms;
     }
+#if SOUND_BGM_ENABLED
     if(!advance) {
         AU_VOICE(0,2)=0; AU_VOICE(1,2)=0; AU_VOICE(2,2)=0;
         return;
@@ -150,6 +161,11 @@ void sound_frame(unsigned ms,int advance) {
         else if(!(s&1u)) burst(72,W_NOISE,5u,33u,0);
     }
     step=(step+1u)&63u;
+#else
+    // Voices 0..2 stay disabled after sound_init(). Voice 3 is still timed
+    // above so effects end normally; the drum sequencer never runs.
+    (void)advance;
+#endif
 }
 
 #else /* SOUND_ENABLED == 0: muted build */

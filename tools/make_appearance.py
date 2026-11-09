@@ -1,7 +1,7 @@
 """Compile an independent SD artwork pack and small flat-color ROM fallback.
 PNG pixels are converted only to native RGB565. Models are data, not collisions.
 """
-import json, struct, zlib
+import json, re, struct, zlib
 from pathlib import Path
 from PIL import Image
 base=Path(__file__).resolve().parents[1]
@@ -53,6 +53,7 @@ struct.pack_into('<II',pack,8,size,zlib.crc32(pack[64:]))
 struct.pack_into('<13H',pack,16,0,144,0,0,0,0,0,look_offset,len(obj['palettes']),
                  cue_offset,len(obj['bindings']),model_offset,len(obj['models']))
 pack.extend(bytes((-len(pack))%512))
-if len(pack)>4096:raise ValueError('Artwork exceeds the 4 KiB reserved cache')
+cache_bytes=int(re.search(r'#define ART_CACHE_BYTES\s+(\d+)',(base/'firmware/appearance.h').read_text()).group(1))
+if len(pack)>cache_bytes:raise ValueError(f'Artwork exceeds the {cache_bytes} B reserved cache')
 target=base/'sd_payload/RSART.BIN';target.parent.mkdir(exist_ok=True);target.write_bytes(pack)
 print(f'SD art: {size} data bytes, {len(pack)} padded bytes. Palettes + model geometry; scene backdrops are generated in firmware.')

@@ -1,11 +1,12 @@
 /* Host check of the actual firmware renderers. Build with ROAD_BENCHMARK,
- * road/menu/player/level/obstacle/walls/glass/appearance.c; no MMIO used.
+ * road/menu/flyover/player/level/obstacle/walls/glass/appearance.c; no MMIO used.
  * Optional argument is an existing directory for native RGB565 previews. */
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include "../firmware/menu.h"
 #include "../firmware/player.h"
+#include "../firmware/flyover.h"
 #include "../firmware/level.h"
 #include "../firmware/sd_levels.h"
 Level sd_level;
@@ -116,6 +117,24 @@ int main(int argc,char **argv) {
     for(i=0;i<32;i++) {
         reset();menu_draw(&state,i*128,&sink);complete();save(dir,"motion",4,i);
     }
+    /* Verify the freestanding clock reduction without EABI division. */
+    for(i=0;i<FLYOVER_PERIOD;i++) {
+        assert(flyover_time(i)==i);
+        assert(flyover_time(i+FLYOVER_PERIOD)==i);
+    }
+    assert(flyover_time(0xffffffffu)==0xffffffffu%FLYOVER_PERIOD);
+    /* Sample every scene, transitions and equivalent ticks in the next loop. */
+    for(i=0;i<200;i++) {
+        uint32_t first;
+        reset();menu_draw(&state,i*400,&sink);complete();first=hash;
+        save(dir,"tour",4,i);
+        reset();menu_draw(&state,i*400+FLYOVER_PERIOD,&sink);complete();assert(hash==first);
+    }
+    reset();menu_draw(&state,0xffffffffu,&sink);complete();
+    reset();menu_draw(&state,0xffffffffu%FLYOVER_PERIOD,&sink);complete();
+    { uint32_t last=hash;
+      reset();menu_draw(&state,0xffffffffu,&sink);complete();assert(hash==last); }
+    puts("PASS flyover: 200 tour frames and exact 80000 ms loop, four detailed scenes, large uptime");
     printf("PASS: %u skins, %u RLE rows with identical sphere silhouettes, %u animated menus (SD/ROM/error), %u sprite-state frames, %u projection frames; %u pixels/frame\n",PLAYER_COUNT,PLAYER_COUNT*BALL_HEIGHT,PLAYER_COUNT*4+32,PLAYER_COUNT*5,total,ROAD_WIDTH*ROAD_HEIGHT);
     return 0;
 }

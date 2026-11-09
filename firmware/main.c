@@ -129,7 +129,7 @@ static struct { unsigned done,gems,pct,state,vol; int paused,vol_show; } hud;
 static uint16_t *hud_pixels;   /* non-zero while a scanline is being composited */
 static unsigned hud_row;
 static void hud_digit(unsigned x,unsigned y,unsigned digit);
-static void hud_glyph(unsigned x,unsigned y,const uint8_t *rows,uint16_t on,uint16_t off);
+static void hud_glyph(unsigned x,unsigned y,const uint8_t *rows,uint16_t on);
 static void hud_gem_icon(unsigned x,unsigned y);
 static void hud_volume_bars(void);
 static unsigned hud_tens(unsigned v);
@@ -137,7 +137,9 @@ static uint32_t hud_divide(uint32_t n,uint32_t d);
 static void hud_rect(unsigned x,unsigned y,unsigned w,unsigned h,uint16_t color) {
     unsigned i;
     if(!hud_pixels) { fill(x,y,w,h,color); return; }
-    if(y!=hud_row) return;   /* Only the scanline being composited is touched. */
+    /* Every covered row must be composited, including the second row of a
+     * 2x glyph and the full opaque counter backing. */
+    if(hud_row<y || hud_row-y>=h) return;
     for(i=0;i<w && x+i<ROAD_WIDTH;i++) hud_pixels[x+i]=color;
 }
 /* ---- Volume -------------------------------------------------------------
@@ -251,16 +253,19 @@ static unsigned hud_tens(unsigned v) {
     if(v>=50) return 5; if(v>=40) return 4; if(v>=30) return 3; if(v>=20) return 2;
     return v>=10?1u:0u;
 }
-static void hud_glyph(unsigned x,unsigned y,const uint8_t *rows,uint16_t on,uint16_t off) {
-    unsigned row;
-    for(row=0;row<5;row++) {
+static void hud_glyph(unsigned x,unsigned y,const uint8_t *rows,uint16_t on) {
+    unsigned pass,row;
+    /* Paint only the strokes, with a one-pixel rim for bright scenery.
+     * Outline all strokes before their ink, so neighbours cannot erase ink. */
+    for(pass=0;pass<2;pass++) for(row=0;row<5;row++) {
         unsigned bits=rows[row],col;
-        for(col=0;col<3;col++)
-            hud_rect(x+col*2,y+row*2,2,2,(bits>>(2-col))&1u?on:off);
+        for(col=0;col<3;col++) if(bits&(1u<<(2-col)))
+            hud_rect(x+col*2-(pass?0u:1u),y+row*2-(pass?0u:1u),
+                     pass?2u:4u,pass?2u:4u,pass?on:0x0000u);
     }
 }
 static void hud_digit(unsigned x,unsigned y,unsigned digit) {
-    hud_glyph(x,y,hud_digits[digit],0xffffu,0x0000u);
+    hud_glyph(x,y,hud_digits[digit],0xffffu);
 }
 static void hud_number(unsigned x,unsigned y,unsigned v) {
     unsigned tens=hud_tens(v);
@@ -269,12 +274,12 @@ static void hud_number(unsigned x,unsigned y,unsigned v) {
 }
 static void hud_gem_icon(unsigned x,unsigned y) {
     static const uint8_t widths[5]={1,3,5,3,1};
-    unsigned row;
-    for(row=0;row<5;row++)
-        hud_rect(x+(5-widths[row])/2,y+row*2,widths[row],2,0x07ffu);
+    unsigned pass,row;
+    for(pass=0;pass<2;pass++) for(row=0;row<5;row++)
+        hud_rect(x+(5-widths[row])/2-(pass?0u:1u),y+row*2-(pass?0u:1u),
+                 widths[row]+(pass?0u:2u),pass?2u:4u,pass?0x07ffu:0x0000u);
 }
 static void hud_counter(unsigned gems) {
-    hud_rect(3,4,28,16,0x0000u);
     hud_gem_icon(6,5);
     hud_number(16,5,gems);
 }
@@ -288,13 +293,12 @@ static unsigned hud_pct(const Road *r,uint32_t camera) {
  * original shows on its result screen. */
 static void hud_result(void) {
     unsigned value=hud.pct,x;
-    hud_rect(ROAD_WIDTH/2-36,6,72,14,0x0000u);
     hud_gem_icon(ROAD_WIDTH/2-32,8);
     hud_number(ROAD_WIDTH/2-23,8,hud.gems);
     x=ROAD_WIDTH/2-2;
     if(value>=100) { hud_digit(x,8,1); hud_digit(x+7,8,0); hud_digit(x+14,8,0); x+=21; }
     else { hud_number(x,8,value); x+=14; }
-    hud_glyph(x,8,hud_pct_rows,0xffe0u,0x0000u);
+    hud_glyph(x,8,hud_pct_rows,0xffe0u);
 }
 /* Ten-step master-volume bar, drawn in the HUD band but at the opposite end
  * from the gem counter. It only exists for 1.2 s after a change: every frame
@@ -369,6 +373,7 @@ static __attribute__((noinline)) void menu_paint(const RoadSink *sink,unsigned s
     m.level_id=(uint8_t)(card?sd_levels_id(selected):levels[selected]->id);
     menu_draw(&m,ticks,sink);
 }
+#ifndef HUD_HOST_TEST
 int main(void) {
     /* Startup branches directly here; explicitly initialize mutable state. */
     uint32_t camera=0,last_time,frame_start,keys;
@@ -530,3 +535,4 @@ int main(void) {
         finish_frame(frame_start,&frame_phase);
     }
 }
+#endif

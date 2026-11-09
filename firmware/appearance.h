@@ -8,8 +8,10 @@ typedef struct {
     uint16_t short_pad,air_front,air_side,air_top;
     uint8_t solid_model,backdrop,air_model,ground_model;
 } Appearance;
-#define ART_CACHE_ADDRESS 0x00007000u
-#define ART_CACHE_BYTES 4096u
+/* Current palette/geometry pack is 664 B, sector-padded to 1024 B.
+ * This area must stay above the code region in code.sct. */
+#define ART_CACHE_ADDRESS 0x00007c00u
+#define ART_CACHE_BYTES 1024u
 typedef struct {
     int16_t x,z,width,depth,bottom,top;
     uint8_t front,side,roof,flags;

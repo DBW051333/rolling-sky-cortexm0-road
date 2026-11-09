@@ -1,5 +1,7 @@
 #include "menu.h"
 #include "player.h"
+#include "flyover.h"
+#include "menu_title.h"
 #define CYAN 0x07ffu
 #define PINK 0xf91fu
 #define WHITE 0xe7ffu
@@ -61,115 +63,69 @@ static void panel(unsigned top,unsigned height,uint16_t edge,int active) {
     rect(10,(int)top,5,3,0x0002u);
     rect(ROAD_WIDTH-15,(int)(top+height-3),5,3,0x0002u);
 }
-static void city(uint32_t ticks) {
-    unsigned i,x,t=ticks>>6;
-    uint16_t base=row<70?0x0804u:row<142?0x1008u:0x0804u;
-    for(x=0;x<ROAD_WIDTH;x++) pixels[x]=base;
-    /* Slow skyline; a faster shop layer establishes parallax. All geometry
-     * is pixel aligned, periodic and independent of menu selections. */
-    if(row>=46 && row<142) for(i=0;i<9;i++) {
-        unsigned world=i+(t>>6);
-        int bx=(int)(i*32)-(int)((t>>1)&31u),top=52+(int)((world*13)&31u);
-        if((int)row<top-6) continue;
-        rect(bx,top,28,142-top,0x18cdu);
-        rect(bx+3,top-6,2,6,0x29b1u);
-        rect(bx+2,top,24,1,0x2933u);
-        {
-            unsigned wy;
-            for(wy=0;wy<5;wy++) {
-                int window_y=top+6+(int)wy*10;
-                if((int)row<window_y || (int)row>=window_y+4) continue;
-                for(x=0;x<3;x++)
-                rect(bx+4+(int)x*8,top+6+(int)wy*10,3,4,((world+x+wy)&3)?0x3294u:0x6831u);
-            }
+static unsigned title_bit(int x,int y) {
+    if(x<0 || x>=174 || y<0 || y>=30) return 0;
+    return (title_mask[y*22+(x>>3)]>>(x&7))&1u;
+}
+static void title(void) {
+    int x,y=(int)row-27;
+    static const uint16_t face_color[8]={0xffffu,0xe7ffu,0xbfffu,0x9effu,0x5e7fu,0x34fau,0x2bd5u,0x2373u};
+    if(y<0 || y>=37) return;
+    for(x=0;x<181;x++) {
+        uint16_t color=0;
+        /* Seven offset slices make a solid extrusion, not a drop shadow. */
+        if(title_bit(x-6,y-6) || title_bit(x-4,y-4) || title_bit(x-2,y-2)) color=0x116bu;
+        if(title_bit(x-1,y-1)) color=0x36bbu;
+        if(title_bit(x,y)) {
+            color=face_color[(unsigned)y>>2];
+            if(!title_bit(x-1,y) || !title_bit(x,y-1)) color=0xffffu;
+            else if(!title_bit(x+1,y) || !title_bit(x,y+1)) color=0x1393u;
         }
-    }
-    if(row>=96 && row<180) for(i=0;i<5;i++) {
-        unsigned world=i+(t>>6);
-        int bx=(int)(i*64)-(int)(t&63u),top=96+(int)((world*11)&15u);
-        uint16_t neon=(world&1)?PINK:CYAN;
-        if(row<146) {
-        rect(bx,top,60,146-top,0x1049u);
-        rect(bx,top,60,2,0x3811u);
-        rect(bx+4,top+6,24,13,0x200du);
-        rect(bx+4,top+6,24,1,neon);
-        rect(bx+4,top+18,24,1,neon);
-        for(x=0;x<4;x++) {
-            rect(bx+7+(int)x*5,top+9,2,7,neon);
-            rect(bx+6+(int)x*5,top+12,4,1,neon);
-        }
-        rect(bx+36,top+4,17,29,0x222fu);
-        rect(bx+38,top+6,13,25,0x08b3u);
-        rect(bx+43,top+6,2,25,0x1050u);
-        rect(bx+3,143,54,2,neon);
-        }
-        /* Broken neon reflections in the wet street. */
-        for(x=0;x<5;x++)
-            rect(bx+8-(int)x*2,150+(int)x*7,24+(int)x*3,1,((x+t)&1)?0x2010u:0x0190u);
-    }
-    rect(0,146,ROAD_WIDTH,2,0x4976u);
-    /* Hover taxi with a cyan headlight, sweeping past the shop fronts. */
-    if(row>=130 && row<=143) { int car=(int)((t*3)&511u)-80;
-      rect(car+7,130,22,5,0x692fu); rect(car,135,38,8,0xb177u);
-      rect(car+10,131,16,4,0x04d9u); rect(car+33,136,6,3,CYAN);
-      rect(car+4,143,30,1,PINK);
-    }
-    if(row>=48 && row<179) for(i=0;i<12;i++) {
-        int rx=(int)((i*43+t)&255u),ry=(int)((i*29+t*5)&127u)+48;
-        rect(rx,ry,1,4,0x3215u);
-    }
-    /* Road-edge lane lights continue scrolling below the cards. */
-    if(row>=154) for(i=0;i<7;i++) {
-        int y=154+(int)i*28+(int)((t*2)&15u);
-        rect(2,y,4,10,0x0354u); rect(ROAD_WIDTH-6,y,4,10,0x780fu);
+        if(color) pixels[9+x]=color;
     }
 }
 void menu_draw(const MenuState *s,uint32_t ticks,const RoadSink *sink) {
-    unsigned x;
+    unsigned x,time=flyover_time(ticks),stage=time<20000?0:time<40000?1:time<60000?2:3;
     const uint16_t *palette=player_colors();
     pixels=road_scanline_buffer();
+    flyover_prepare(time);
     for(row=0;row<320;row++) {
-        city(ticks);
-        label(12,9,"NEON DISTRICT",0,CYAN);
-        label(ROAD_WIDTH-48,9,"ONLINE",0,PINK);
-        label(19,28,"ROLLING",1,0x6013u);
-        label(17,26,"ROLLING",1,WHITE);
-        label(17,46,"SKY",1,CYAN);
-        label(66,52,"NIGHT RUN",0,PINK);
-        rect(17,65,50,2,CYAN); rect(69,65,24,2,PINK);
-        panel(153,43,s->focus?0x3993u:CYAN,!s->focus);
-        label(22,161,s->focus?"LEVEL":"LEVEL <    >",0,s->focus?MUTED:CYAN);
-        number(ROAD_WIDTH-38,164,s->selected+1,1,WHITE);
-        label(98,165,s->level_id==4?"HILLS":s->level_id==5?"MASSIF":"",0,MUTED);
-        label(22,180,"BEST",0,MUTED); number(52,180,s->best,0,WHITE);
-        label(76,180,"GEMS",0,MUTED); number(106,180,s->gems,0,WHITE);
-        number(ROAD_WIDTH-38,180,s->total,0,MUTED);
-        panel(205,77,s->focus?PINK:0x3993u,s->focus);
-        label(22,215,s->focus?"SKIN <    >":"SKIN",0,s->focus?PINK:MUTED);
-        label(22,235,player_name(),0,WHITE);
-        number(22,251,player_selected()+1,0,CYAN);
-        label(40,251,"OF",0,MUTED); number(58,251,PLAYER_COUNT,0,MUTED);
-        label(22,269,"NEON ORBS",0,PINK);
-        /* Actual game sprite at its native size, with a subtle scan pedestal. */
-        rect(ROAD_WIDTH-84,276,68,2,0x3a39u);
-        if(row>=209 && row<277) {
-            unsigned n,i,pos=ROAD_WIDTH-84; const uint8_t *runs=player_row(row-209,&n);
+        static const char locations[4][16]={"DEEP SPACE","RIVER MOUNTAINS","METROPOLIS","FOREST CANOPY"};
+        flyover_line(pixels,row);
+        label(12,9,"WORLD TOUR",0,WHITE);
+        label(ROAD_WIDTH-36,9,s->card?"SD":"ROM",0,s->error?0xf800u:s->card?CYAN:WHITE);
+        title();
+        label(12,76,locations[stage],0,WHITE);
+        rect(12,88,64,1,0x298du);
+        rect(12,88,1+(int)((time*52u)>>16),1,0x97ffu);
+        label(12,199,"A",0,MUTED);number(18,199,s->adc+1,0,MUTED);
+        number(36,199,s->percent,0,s->live?(s->manual?0xffe0u:CYAN):MUTED);
+        label(72,199,"VOL",0,MUTED);number(96,199,s->volume,0,CYAN);
+        if(s->card) {
+            label(122,199,"V",0,MUTED);number(128,199,s->revision,0,CYAN);
+            label(150,199,"M",0,MUTED);number(156,199,s->mechs,0,CYAN);
+        }
+        panel(211,34,s->focus?0x3993u:CYAN,!s->focus);
+        label(22,218,s->focus?"LEVEL":"LEVEL <    >",0,s->focus?MUTED:CYAN);
+        number(ROAD_WIDTH-38,218,s->selected+1,1,WHITE);
+        label(22,233,"BEST",0,MUTED); number(52,233,s->best,0,WHITE);
+        label(76,233,"GEMS",0,MUTED); number(106,233,s->gems,0,WHITE);
+        number(ROAD_WIDTH-38,233,s->total,0,MUTED);
+        panel(250,69,s->focus?PINK:0x3993u,s->focus);
+        label(22,257,s->focus?"SKIN <    >":"SKIN",0,s->focus?PINK:MUTED);
+        label(22,274,player_name(),0,WHITE);
+        number(22,288,player_selected()+1,0,CYAN);
+        label(40,288,"OF",0,MUTED); number(58,288,PLAYER_COUNT,0,MUTED);
+        label(22,306,"2 SELECT",0,CYAN);
+        label(76,306,s->focus?"8 SET":"8 GO",0,PINK);
+        if(row>=251 && row<319) {
+            unsigned n,i,pos=ROAD_WIDTH-84; const uint8_t *runs=player_row(row-251,&n);
             for(i=0;i<n;i++) {
                 unsigned len=runs[i]>>3,index=runs[i]&7u;
                 if(index) rect((int)pos,(int)row,(int)len,1,palette[index]);
                 pos+=len;
             }
         }
-        label(12,285,"2 SELECT",0,CYAN);
-        label(ROAD_WIDTH-70,285,s->focus?"8 APPLY":"8 PLAY",0,PINK);
-        label(12,298,"A",0,MUTED); number(18,298,s->adc+1,0,MUTED);
-        number(36,298,s->percent,0,s->live?(s->manual?0xffe0u:CYAN):MUTED);
-        label(72,298,"VOL",0,MUTED); number(96,298,s->volume,0,CYAN);
-        if(s->card) {
-            label(12,309,"V",0,MUTED); number(18,309,s->revision,0,CYAN);
-            label(48,309,"M",0,MUTED); number(54,309,s->mechs,0,CYAN);
-        }
-        label(ROAD_WIDTH-36,309,s->card?"SD":"ROM",0,s->error?0xf800u:s->card?CYAN:WHITE);
         sink->begin_line(0,row,ROAD_WIDTH,sink->context);
         for(x=0;x<ROAD_WIDTH;) {
             unsigned end=x+1; uint16_t color=pixels[x];

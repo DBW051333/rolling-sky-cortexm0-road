@@ -13,7 +13,9 @@
 /* Slide potentiometer on header P2, converted by the FPGA's internal 12-bit
  * ADC. Channels 1..7 are the seven ADC pins on that socket; the keyboard
  * peripheral exports them at 0x008 + 4*(channel-1). */
+#ifndef ADC_LEVEL
 #define ADC_LEVEL(ch) REG(0x40000008u+4u*((ch)-1u))
+#endif
 #define VIDEO_X REG(0x40050000)
 #define VIDEO_Y REG(0x40050004)
 #define VIDEO_BEGIN REG(0x40050008)
@@ -65,14 +67,14 @@ static void fill(unsigned x,unsigned y,unsigned w,unsigned h,uint16_t color) {
  * seven of those channels to header P2, so which one carries the wiper is not
  * known in advance. The channel that has travelled the most wins, and it only
  * becomes usable once its own range is wide enough to be a hand sweep rather
- * than pin noise. That same range is the calibration: the two ends of the
- * track are whatever the board's reference actually produces, so no absolute
- * voltage has to be trusted. */
+ * than pin noise. Sweep both mechanical stops in the menu, then KEY3 commits
+ * the measured range. Never steer with a still-growing calibration: the
+ * leading sample of a first sweep would always map to the road edge. */
 #define ADC_CHANNELS 7u
 #define ADC_MIN_SPAN 300u   /* about 0.07 VREF; below this it is pin noise */
 static uint16_t adc_level[ADC_CHANNELS];
 static uint16_t adc_low[ADC_CHANNELS],adc_high[ADC_CHANNELS];
-static uint8_t adc_channel,adc_live,adc_primed,adc_manual;
+static uint8_t adc_channel,adc_live,adc_primed,adc_manual,adc_calibrated;
 static void adc_poll(void) {
     unsigned i;
     for(i=0;i<ADC_CHANNELS;i++) {
@@ -82,8 +84,10 @@ static void adc_poll(void) {
          * it has to hide, so a light filter keeps the pot feeling direct. */
         v=((unsigned)adc_level[i]*3u+raw)>>2;
         adc_level[i]=(uint16_t)v;
-        if(v<adc_low[i]) adc_low[i]=(uint16_t)v;
-        if(v>adc_high[i]) adc_high[i]=(uint16_t)v;
+        if(!adc_calibrated) {
+            if(v<adc_low[i]) adc_low[i]=(uint16_t)v;
+            if(v>adc_high[i]) adc_high[i]=(uint16_t)v;
+        }
     }
     adc_primed=1;
 }
@@ -93,6 +97,7 @@ static unsigned adc_span(unsigned channel) {
 static unsigned adc_position(void);
 static void adc_select(void) {
     unsigned i,best=0,best_span=0;
+    if(adc_calibrated) return;
     if(adc_manual) { adc_live=adc_span(adc_channel)>=ADC_MIN_SPAN; return; }
     for(i=0;i<ADC_CHANNELS;i++) {
         unsigned span=adc_span(i);
@@ -113,7 +118,13 @@ static void adc_cycle(void) {
     unsigned next=(unsigned)adc_channel+1u;
     adc_manual=1;
     adc_channel=(uint8_t)(next==ADC_CHANNELS?0u:next);  /* no modulo: it links a divide */
-    adc_live=adc_span(adc_channel)>=ADC_MIN_SPAN;
+    adc_live=adc_calibrated=adc_primed=0;
+}
+/* A second KEY3 after calibration starts a fresh sweep. Until committed,
+ * keyboard steering remains available and the slider cannot move the ball. */
+static void adc_calibrate(void) {
+    if(adc_calibrated) adc_live=adc_calibrated=adc_primed=0;
+    else if(adc_live) adc_calibrated=1;
 }
 /* Session bests live in RAM only; the board offers no persistent storage. */
 static uint8_t best_pct[24],best_gems[24];
@@ -196,33 +207,21 @@ static uint16_t keys_player_frame(uint16_t bits) {
     return bits;
 #endif
 }
-/* Slide position over the channel's own observed swing, 0..1000. */
+/* Slide position over the frozen endpoint range, 0..1000. Clamp before
+ * subtraction: noise beyond an endpoint must not wrap to the opposite side. */
 static unsigned adc_position(void) {
-    unsigned span=adc_span(adc_channel),pos;
+    unsigned span=adc_span(adc_channel),v=adc_level[adc_channel];
     if(span<ADC_MIN_SPAN) return 500u;
-    pos=(unsigned)hud_divide(
-        (uint32_t)((unsigned)adc_level[adc_channel]-(unsigned)adc_low[adc_channel])*1000u,span);
-    return pos>1000u?1000u:pos;
+    if(v<=adc_low[adc_channel]) return 0;
+    if(v>=adc_high[adc_channel]) return 1000;
+    return (unsigned)hud_divide((v-adc_low[adc_channel])*1000u,span);
 }
-/* Steering auto-calibrates to the pot's real swing: min/max of the selected
- * channel are tracked continuously and mapped onto the whole road, so the
- * full travel is usable whatever the hardware delivers (the EG4S20
- * converter's range compresses at both rails -- the board's own manual rates
- * it 0.33..2.97 V -- so a raw full-scale assumption undershoots, which the
- * 2026-11-01 build got wrong: a full sweep then moved the ball two lanes).
- * Sweep the slider once after power-up; until the span is wide enough the
- * readout stays grey and the keys drive.
- *
- * The outer 1.2 percent of the travel snaps to the end stop. Without it the
- * lanes at either edge need the wiper pushed into its mechanical limit, so
- * the reachable band felt narrower than the road and the last centimetre of
- * the track did nothing -- reported as "the usable part of the slider is too
- * small". The slew keeps the 1 ms collision stepping seeing the whole
- * crossing; 3 Q8/ms tracks a fast sweep instead of trailing it. */
+/* Map only the committed physical travel, retaining 1.2% endpoint snap,
+ * input orientation, noise deadband and the existing slew/collision path. */
 static void adc_steer(Road *r,uint32_t ms) {
     unsigned pos=adc_position();
     int32_t target,delta,step,travel=ROAD_CAMERA_MAX-ROAD_CAMERA_MIN;
-    if(!adc_live || adc_span(adc_channel)<ADC_MIN_SPAN) return;
+    if(!adc_calibrated || !adc_live) return;
 #if INPUT_ROTATED
     pos=1000u-pos;
 #endif
@@ -364,7 +363,7 @@ static __attribute__((noinline)) void menu_paint(const RoadSink *sink,unsigned s
     m.error=(uint8_t)((flags>>5)&1u);
     m.best=best_pct[selected]; m.gems=best_gems[selected];
     m.adc=adc_channel; m.percent=(uint8_t)hud_divide(adc_position(),10u);
-    m.live=adc_live; m.manual=adc_manual; m.volume=(uint8_t)sound_volume_get();
+    m.live=adc_calibrated; m.manual=adc_manual; m.volume=(uint8_t)sound_volume_get();
     if(menu_cached_level!=selected) {
         menu_cached_mechs=(uint8_t)(card?sd_levels_mech_count(selected):0);
         menu_cached_level=(uint8_t)selected;
@@ -445,6 +444,7 @@ int main(void) {
                 selected=0;
             }
             if(keys&(1u<<12)) adc_cycle();
+            if(keys&(1u<<3)) adc_calibrate();
             if((keys&(1u<<6)) && !(keys&(1u<<14))) {
                 if(focus) player_select(player_selected()?player_selected()-1:PLAYER_COUNT-1);
                 else if(selected) selected--;

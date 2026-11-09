@@ -98,6 +98,7 @@ void menu_draw(const MenuState *s,uint32_t ticks,const RoadSink *sink) {
         label(12,76,locations[stage],0,WHITE);
         rect(12,88,64,1,0x298du);
         rect(12,88,1+(int)((time*52u)>>16),1,0x97ffu);
+        label(12,186,s->live?"3 RECAL":"SWEEP ENDS,3 CAL",0,s->live?MUTED:CYAN);
         label(12,199,"A",0,MUTED);number(18,199,s->adc+1,0,MUTED);
         number(36,199,s->percent,0,s->live?(s->manual?0xffe0u:CYAN):MUTED);
         label(72,199,"VOL",0,MUTED);number(96,199,s->volume,0,CYAN);

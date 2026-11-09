@@ -1,5 +1,9 @@
 # 霓虹街景首页与角色皮肤（2026-11-09）
 
+> 当前版本已改为 12 款纯小球皮肤，人物皮肤及 `player_pixels.h` 已删除。
+> `tools/make_players.py` 现在生成 `firmware/player_skins.h` 名称和调色板，纹样在 `firmware/player.c` 中计算。
+> 当前清单及实现见 [README](../README.md)，构建和实物进展见 [VALIDATION](../VALIDATION.md)。以下保留早期 8 款皮肤交付记录，非当前实现。
+
 本次将静态蓝色卡片菜单替换为原创霓虹像素街景，并把 8 款可选角色接入实际道路渲染。画面预览来自编译运行本仓库 C 渲染器的输出，不是设计稿或板卡实拍。
 
 ## 操作与外观

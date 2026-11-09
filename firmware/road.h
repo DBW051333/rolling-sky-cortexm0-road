@@ -24,6 +24,10 @@
                                 four-row pad flight, landing a hair past the
                                 take-off row plus four so chains re-trigger */
 #define ROAD_SHORT_JUMP_MS 768u
+/* Collision still lands on the pad's leading edge so chained pads retrigger
+ * reliably. The sprite remains airborne for half a row (about 170 ms) and
+ * completes its descent near the centre of the destination floor. */
+#define ROAD_VISUAL_LANDING_MS 170u
 /* Gem and finish-line markers are art-independent until skins catch up.
  * Gems are drawn as a four-tone diamond the size of the local tile, not as a
  * handful of pixels, so they stay readable at the far end of the track.
@@ -71,6 +75,7 @@ typedef struct {
     uint8_t forward_remainder;
     const struct Level *level;
     uint16_t jump_ms,jump_row,jump_total;
+    uint16_t visual_jump_ms,visual_jump_total,visual_next_total;
     uint16_t death_ms;
     uint8_t death_kind;
     uint32_t gem_bits;   /* collected gems, one bit per gem index */

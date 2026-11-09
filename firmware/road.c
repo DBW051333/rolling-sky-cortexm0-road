@@ -173,6 +173,8 @@ void road_init(Road *r) {
     r->camera_x_q8=ROAD_CAMERA_CENTER; r->forward_remainder=0;
     r->level=0;
     r->jump_ms=0; r->jump_row=0xffffu; r->jump_total=ROAD_JUMP_MS;
+    r->visual_jump_ms=0; r->visual_jump_total=ROAD_JUMP_MS+ROAD_VISUAL_LANDING_MS;
+    r->visual_next_total=0;
     r->death_ms=0; r->death_kind=0;
     r->overlay=0;
     r->sfx=0; r->mech_fired=0;

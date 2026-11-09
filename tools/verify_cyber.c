@@ -52,6 +52,7 @@ int main(int argc,char **argv) {
     const RoadSink sink={begin,span,0};
     unsigned skin,y,n,i,lane,l,phase,j,total=0;
     uint32_t menu_hash=0;
+    unsigned char silhouette[BALL_HEIGHT][BALL_WIDTH];
     MenuState state={0}; state.total=5; state.card=5; state.volume=10;
     state.best=87; state.gems=12; state.percent=50; state.live=1;
     for(skin=0;skin<PLAYER_COUNT;skin++) {
@@ -59,8 +60,17 @@ int main(int argc,char **argv) {
         player_select(skin);
         for(y=0;y<68;y++) {
             const uint8_t *runs=player_row(y,&n); unsigned width=0;
-            assert(n && n<=24);
-            for(i=0;i<n;i++) { assert(runs[i]>>3); width+=runs[i]>>3; }
+            assert(n && n<=BALL_WIDTH);
+            for(i=0;i<n;i++) {
+                unsigned k,length=runs[i]>>3;
+                assert(length && width+length<=BALL_WIDTH);
+                for(k=0;k<length;k++) {
+                    unsigned opaque=(runs[i]&7u)!=0;
+                    if(!skin) silhouette[y][width+k]=(unsigned char)opaque;
+                    else assert(silhouette[y][width+k]==opaque);
+                }
+                width+=length;
+            }
             assert(width==68);
         }
         player_row(68,&n); assert(!n);
@@ -76,7 +86,7 @@ int main(int argc,char **argv) {
         for(i=0;i<5;i++) {
             int lift,red=0,hidden=0;
             road_init(&road); level_load(&road,&level_one,&camera);
-            if(i==1) road.jump_ms=road.jump_total/2;
+            if(i==1) { road.jump_ms=road.jump_total/2; road.visual_jump_total=road.jump_total+ROAD_VISUAL_LANDING_MS; road.visual_jump_ms=road.visual_jump_total/2; }
             if(i==2) { road.death_kind=GAME_HIT;road.death_ms=70;red=1; }
             if(i==3) { road.death_kind=GAME_FELL;road.death_ms=700; }
             if(i==4) { road.death_kind=GAME_FELL;road.death_ms=800;hidden=1; }
@@ -106,6 +116,6 @@ int main(int argc,char **argv) {
     for(i=0;i<32;i++) {
         reset();menu_draw(&state,i*128,&sink);complete();save(dir,"motion",4,i);
     }
-    printf("PASS: 8 skins, 544 RLE rows, 64 animated menus (SD/ROM/error), 40 sprite-state frames, %u projection frames; 63360 pixels/frame\n",total);
+    printf("PASS: %u skins, %u RLE rows with identical sphere silhouettes, %u animated menus (SD/ROM/error), %u sprite-state frames, %u projection frames; %u pixels/frame\n",PLAYER_COUNT,PLAYER_COUNT*BALL_HEIGHT,PLAYER_COUNT*4+32,PLAYER_COUNT*5,total,ROAD_WIDTH*ROAD_HEIGHT);
     return 0;
 }

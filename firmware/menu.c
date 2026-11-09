@@ -148,8 +148,8 @@ void menu_draw(const MenuState *s,uint32_t ticks,const RoadSink *sink) {
         label(22,215,s->focus?"SKIN <    >":"SKIN",0,s->focus?PINK:MUTED);
         label(22,235,player_name(),0,WHITE);
         number(22,251,player_selected()+1,0,CYAN);
-        label(40,251,"OF 08",0,MUTED);
-        label(22,269,player_selected()<4?"CHROME":"AI MUSES",0,PINK);
+        label(40,251,"OF",0,MUTED); number(58,251,PLAYER_COUNT,0,MUTED);
+        label(22,269,"NEON ORBS",0,PINK);
         /* Actual game sprite at its native size, with a subtle scan pedestal. */
         rect(ROAD_WIDTH-84,276,68,2,0x3a39u);
         if(row>=209 && row<277) {

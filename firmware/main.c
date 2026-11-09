@@ -2,7 +2,8 @@
 #include "road.h"
 #include "level.h"
 #include "sd_levels.h"
-#include "menu_title.h"
+#include "menu.h"
+#include "player.h"
 #include "appearance.h"
 #include "sound.h"
 #define REG(a) (*(volatile uint32_t *)(a))
@@ -68,59 +69,6 @@ static void fill(unsigned x,unsigned y,unsigned w,unsigned h,uint16_t color) {
     wait_span(); window(x,y,w,h);
     if(count>65535) { span(38400,color,0); count-=38400; }
     span(count,color,0); wait_span();
-}
-/* Small, code-native 5x7 alphabet for the board menu; no bitmap screens. */
-static void text(unsigned x,unsigned y,const char *s,unsigned scale,uint16_t color) {
-    static const char alphabet[]="LEVSTAR0123456789DOMHI";
-    static const uint8_t font[][5]={
-        {127,64,64,64,64},
-        {127,73,73,73,65},
-        {31,32,64,32,31},
-        {38,73,73,73,50},
-        {1,1,127,1,1},
-        {126,9,9,9,126},
-        {127,9,25,41,70},
-        {62,81,73,69,62},
-        {0,66,127,64,0},
-        {98,81,73,73,70},
-        {34,65,73,73,54},
-        {24,20,18,127,16},
-        {39,69,69,69,57},
-        {60,74,73,73,48},
-        {1,113,9,5,3},
-        {54,73,73,73,54},
-        {6,73,73,41,30},
-        {127,65,65,34,28},
-        {62,65,65,65,62},
-        {127,2,12,2,127},
-        {127,8,8,8,127},
-        {0,65,127,65,0},
-    };
-    while(*s) {
-        unsigned i,col,row;
-        for(i=0;alphabet[i] && alphabet[i]!=*s;i++) {}
-        if(alphabet[i]) for(col=0;col<5;col++) for(row=0;row<7;row++)
-            if(font[i][col]&(1u<<row)) fill(x+col*scale,y+row*scale,scale,scale,color);
-        x+=6*scale; s++;
-    }
-}
-#define MENU_SKY 0x347fu
-static void menu_number(unsigned x,unsigned y,unsigned value,unsigned scale,uint16_t color) {
-    char number[3]={'0','0',0};
-    volatile unsigned n=value;
-    while(n>=10) { n-=10; number[0]++; }
-    number[1]=(char)('0'+n);
-    text(x,y,number,scale,color);
-}
-static void menu_card(unsigned x,unsigned y,unsigned w,unsigned h,int front) {
-    fill(x+4,y+6,w,h,0x2357);
-    fill(x+3,y,w-6,h,front?0xffff:0xa6bf);
-    fill(x,y+3,w,h-6,front?0xffff:0xa6bf);
-    fill(x+4,y+4,w-8,h-8,front?0x1b18:0x2c5b);
-    fill(x+9,y+9,w-18,3,front?0x5e5f:0x4d5e);
-}
-static int menu_hills(unsigned index,unsigned card) {
-    return (card?sd_levels_id(index):levels[index]->id)==4;
 }
 /* ---- Slide-potentiometer input -------------------------------------------
  * The ADC pins share their package balls with plain IO, and the board routes
@@ -202,51 +150,6 @@ static void hud_rect(unsigned x,unsigned y,unsigned w,unsigned h,uint16_t color)
     if(y!=hud_row) return;   /* Only the scanline being composited is touched. */
     for(i=0;i<w && x+i<ROAD_WIDTH;i++) hud_pixels[x+i]=color;
 }
-static void draw_title(void) {
-    unsigned i,x=(240-TITLE_WIDTH)/2;
-    wait_span(); window(x,18,TITLE_WIDTH,TITLE_HEIGHT);
-    for(i=0;i<sizeof(title_runs);i++)
-        span(title_runs[i]>>2,title_palette[title_runs[i]&3u],0);
-    wait_span();
-    window(x+TITLE_BALL_X,18+TITLE_BALL_Y,TITLE_BALL_SIZE,TITLE_BALL_SIZE);
-    for(i=0;i<sizeof(title_ball_runs);i++) {
-        unsigned run=title_ball_runs[i],color=run&7u;
-        span(run>>3,color?title_ball_palette[color]:MENU_SKY,0);
-    }
-    wait_span();
-    /* Two-tone accent under the fixed, italic logo. */
-    fill(66,105,108,2,0x86ff);
-    fill(100,105,40,2,0xff29);
-}
-/* Bring-up readout: which ADC channel won and how far along its own swing the
- * wiper currently sits, as two decimal digits of percent. Grey means the
- * sweep was too narrow to drive the ball yet. Percent rather than the raw
- * sample because the useful question is "does the whole slider travel?", and
- * that is exactly what this number answers: sweep end to end and it should
- * read 00 and 99.
- *
- * The line is the only thing on the menu that changes by itself, so it
- * repaints its own small strip and only when channel, state or position
- * moved: the 2026-10-29 build instead redrew the whole menu every 250 ms,
- * and the full-screen sky fill inside draw_menu flashed on the panel at
- * 4 Hz. */
-static void menu_adc_line(int force) {
-    static uint8_t seen,last_channel,last_live;
-    static uint16_t last_value;
-    char line[3];
-    unsigned pos=(unsigned)hud_divide(adc_position(),10u);
-    uint16_t color=adc_live?(adc_manual?0xffe0u:0x07e0u):0x9cd3u;
-    if(pos>99u) pos=99u;
-    if(!force && seen && last_channel==adc_channel && last_live==adc_live &&
-       last_value==(uint16_t)pos) return;
-    seen=1; last_channel=adc_channel; last_live=adc_live; last_value=(uint16_t)pos;
-    line[0]='A';
-    line[1]=(char)('1'+adc_channel);
-    line[2]=0;
-    fill(2,281,44,12,MENU_SKY);
-    text(4,283,line,1,color);
-    menu_number(16,283,pos,1,color);
-}
 /* ---- Volume -------------------------------------------------------------
  * KEY0 steps down, KEY1 steps up. Both are the matrix keys nothing else uses,
  * and both repeat: the first press lands at once, then every 120 ms while the
@@ -266,62 +169,6 @@ static int volume_keys(uint32_t now) {
     if(sound_volume_get()==before) return 0;
     vol_stamp=now;
     return 1;
-}
-/* Called only when the value actually moved. The menu uses the same painter
- * as the game: hud_rect() writes straight to the panel whenever no scanline
- * is being composited, so one bar serves both screens and there is no second
- * layout to keep in sync. */
-static void menu_volume_bar(void) {
-    hud.vol=sound_volume_get();
-    hud_volume_bars();
-}
-static void draw_menu(unsigned selected,unsigned card,unsigned error) {
-    unsigned total=card?card:LEVEL_COUNT;
-    fill(0,0,240,320,MENU_SKY);
-    draw_title();
-    /* Back cards first. Side labels remain visible beside the front card. */
-    if(selected) {
-        menu_card(4,130,88,108,0);
-        if(menu_hills(selected-1,card)) text(12,170,"HILLS",1,0xc73f);
-        else menu_number(12,164,selected,3,0xc73f);
-    }
-    if(selected+1<total) {
-        menu_card(148,130,88,108,0);
-        if(menu_hills(selected+1,card)) text(195,170,"HILLS",1,0xc73f);
-        else menu_number(192,164,selected+2,3,0xc73f);
-    }
-    menu_card(54,150,132,132,1);
-    if(menu_hills(selected,card)) text(62,198,"HILLS",4,0xffff);
-    else menu_number(78,186,selected+1,7,0xffff);
-    /* Session bests in the front card corners: progress top-right, gems
-     * bottom-center; hidden until the level has been played once. */
-    if(best_pct[selected]) {
-        unsigned p=best_pct[selected];
-        fill(148,154,34,13,0x1b18u);
-        hud_digit(153,156,hud_tens(p));
-        hud_digit(160,156,p-hud_tens(p)*10u);
-        hud_glyph(167,156,hud_pct_rows,0xffe0u,0x1b18u);
-    }
-    if(best_gems[selected]) {
-        unsigned g=best_gems[selected];
-        fill(94,262,52,13,0x1b18u);
-        hud_gem_icon(99,264);
-        hud_digit(110,264,hud_tens(g));
-        hud_digit(117,264,g-hud_tens(g)*10u);
-    }
-    text(card?208:196,299,card?"SD":"ROM",2,error?0xf800u:card?0x07e0u:0xffffu);
-    /* Pack revision and mechanism count of the highlighted level. A level
-     * whose table is missing reads M00, which separates a stale card file
-     * from a rendering fault without a debugger attached. */
-    if(card) {
-        char revision[3]={'V',(char)('0'+sd_levels_format()),0};
-        unsigned mechs=sd_levels_mech_count(selected);
-        text(4,299,revision,2,0x07ffu);
-        text(30,299,"M",2,0x9cd3u);
-        menu_number(42,299,mechs,2,mechs?0x07ffu:0xf800u);
-    }
-    menu_adc_line(1);
-
 }
 static int start_level(unsigned selected,unsigned card,Road *r,uint32_t *camera) {
     if(card) return sd_levels_begin(selected,r,camera);
@@ -535,15 +382,37 @@ static void lcd_init(void) {
 #endif
     BACKLIGHT=1;
 }
+/* Keep menu-only locals out of the gameplay stack. Pack the two boolean
+ * flags above the five-bit card count so the call needs no stack arguments. */
+static uint8_t menu_cached_level,menu_cached_mechs;
+static __attribute__((noinline)) void menu_paint(const RoadSink *sink,unsigned selected,
+                                                unsigned flags,uint32_t ticks) {
+    unsigned card=flags&31u;
+    MenuState m;
+    m.selected=(uint8_t)selected; m.total=(uint8_t)(card?card:LEVEL_COUNT);
+    m.focus=(uint8_t)((flags>>6)&1u); m.card=(uint8_t)card;
+    m.error=(uint8_t)((flags>>5)&1u);
+    m.best=best_pct[selected]; m.gems=best_gems[selected];
+    m.adc=adc_channel; m.percent=(uint8_t)hud_divide(adc_position(),10u);
+    m.live=adc_live; m.manual=adc_manual; m.volume=(uint8_t)sound_volume_get();
+    if(menu_cached_level!=selected) {
+        menu_cached_mechs=(uint8_t)(card?sd_levels_mech_count(selected):0);
+        menu_cached_level=(uint8_t)selected;
+    }
+    m.mechs=menu_cached_mechs; m.revision=(uint8_t)sd_levels_format();
+    m.level_id=(uint8_t)(card?sd_levels_id(selected):levels[selected]->id);
+    menu_draw(&m,ticks,sink);
+}
 int main(void) {
     /* Startup branches directly here; explicitly initialize mutable state. */
     uint32_t camera=0,last_time,frame_start,keys;
     int paused=0,points=0,vol_changed=0;
-    unsigned state=GAME_RUNNING,selected=0,card_count=0,sd_error=0;
+    unsigned state=GAME_RUNNING,selected=0,card_count=0,sd_error=0,focus=0;
     int menu=1,menu_dirty=1;
     uint32_t menu_stamp=0;
     const RoadSink sink={begin_line,span,0};
     milliseconds=0; key_events=0; road_frame_count=0; road_last_frame_ms=0; art_sd_loaded=0;
+    player_select(0); menu_cached_level=255;
     road_init(&road);
     road.overlay=&hud_layer;
     level_load(&road,&level_one,&camera);
@@ -585,23 +454,28 @@ int main(void) {
         keys=keys_player_frame(key_events); key_events=0;
         __asm volatile("cpsie i" ::: "memory");
         adc_poll(); adc_select();
-        /* Volume is a small self-contained strip, so it repaints itself
-         * rather than marking the menu dirty: a full repaint per repeat step
-         * would flash the whole sky four times a second. */
+        /* The animated menu composites each pixel once, including volume. */
         vol_changed=volume_keys(milliseconds);
         if(menu) {
-            if(vol_changed) menu_volume_bar();
+            if(vol_changed) menu_dirty=1;
+            if(keys&(1u<<2)) { focus^=1u; menu_dirty=1; }
             if(keys&(1u<<4)) {
                 card_count=sd_levels_mount(); appearance_load(card_count!=0); sd_error=!card_count;
+                menu_cached_level=255;
                 selected=0; menu_dirty=1;
             }
             if(keys&(1u<<12)) { adc_cycle(); menu_dirty=1; }
-            if((keys&(1u<<6)) && !(keys&(1u<<14)) && selected) {
-                selected--; menu_dirty=1;
+            if((keys&(1u<<6)) && !(keys&(1u<<14))) {
+                if(focus) player_select(player_selected()?player_selected()-1:PLAYER_COUNT-1);
+                else if(selected) selected--;
+                menu_dirty=1;
             }
-            if((keys&(1u<<14)) && !(keys&(1u<<6)) && selected+1<(card_count?card_count:LEVEL_COUNT)) {
-                selected++; menu_dirty=1;
+            if((keys&(1u<<14)) && !(keys&(1u<<6))) {
+                if(focus) player_select(player_selected()+1<PLAYER_COUNT?player_selected()+1:0);
+                else if(selected+1<(card_count?card_count:LEVEL_COUNT)) selected++;
+                menu_dirty=1;
             }
+            if((keys&(1u<<8)) && focus) { focus=0; menu_dirty=1; keys&=~(1u<<8); }
             if(keys&(1u<<8)) {
                 if(!start_level(selected,card_count,&road,&camera)) {
                     card_count=0; sd_error=1; selected=0; menu_dirty=1;
@@ -610,16 +484,10 @@ int main(void) {
                 state=GAME_RUNNING; paused=0; menu=0; scored=0;
                 last_time=frame_start=milliseconds; keys=0;
             } else {
-                /* Full repaint only on a real state change; the ADC line is
-                 * the sole self-updating element and repaints its own strip
-                 * (throttled to 10 Hz) instead of dragging the whole menu
-                 * through a sky fill every 250 ms. */
-                if(menu_dirty) {
-                    draw_menu(selected,card_count,sd_error);
-                    menu_dirty=0; menu_stamp=milliseconds;
-                } else if((uint32_t)(milliseconds-menu_stamp)>=100u) {
-                    menu_stamp=milliseconds;
-                    menu_adc_line(0);
+                if(menu_dirty || (uint32_t)(milliseconds-menu_stamp)>=100u) {
+                    menu_paint(&sink,selected,card_count|(sd_error<<5)|(focus<<6),milliseconds);
+                    wait_span();
+                    menu_dirty=0; menu_stamp=frame_start;
                 }
                 /* The menu has no music at all: the sequencer is told to
                  * stand down while the level picker is up, so the beat only

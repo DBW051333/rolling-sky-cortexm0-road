@@ -5,6 +5,7 @@
 # Generated previews, temporary work, backups and FPGA builds
 /preview/
 /tmp/
+__pycache__/
 /backups/
 /td/*
 !/td/rolling_road.al

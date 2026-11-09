@@ -2,6 +2,8 @@
 
 本文面向刚加入项目的开发者或协作 AI，说明仓库内容、开发环境、固件与 SD 卡资源的生成方式、当前验证状态和协作约束。项目当前代码以 `main` 分支为准；开始工作前先拉取最新提交，并检查本指南引用的状态日期。
 
+2026-11-09 新增霓虹赛博朋克首页与 8 款可选角色，操作、资源和最新验证见 [CYBER_MENU_2026-11-09.md](deliverables/CYBER_MENU_2026-11-09.md)。新增 `firmware/menu.c`、`player.c`；角色美术源为 `tools/make_players.py`，完整构建会自动生成 `player_pixels.h`。
+
 ## 1. 项目概况
 
 - 私有仓库：`DBW051333/rolling-sky-cortexm0-road`。

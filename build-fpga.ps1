@@ -1,4 +1,6 @@
 $ErrorActionPreference='Stop'
+& python "$PSScriptRoot\tools\make_players.py"
+if($LASTEXITCODE){throw 'Player art generation failed'}
 & python "$PSScriptRoot\tools\make_appearance.py"
 if($LASTEXITCODE){throw 'Appearance data generation failed'}
 & "$PSScriptRoot\firmware\build.ps1"

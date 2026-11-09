@@ -1,10 +1,13 @@
 #include "road.h"
 #include "level.h"
-#include "ball_sprite.h"
+#include "player.h"
 #include "walls.h"
 #include "glass.h"
 #include "appearance.h"
 static int ball_lift;
+static const uint8_t *sprite_runs;
+static unsigned sprite_count;
+static const uint16_t *sprite_palette;
 static unsigned wall_active,wall_cursor,ball_hidden,ball_red;
 /* ------------------------------------------------------------------------
  * Scene backdrop
@@ -140,6 +143,7 @@ static int line_buffered;
 static unsigned line_end;
 static unsigned line_pixels;   /* pixels streamed for the current scanline */
 static uint16_t line_buf[ROAD_WIDTH];
+uint16_t *road_scanline_buffer(void) { return line_buf; }
 /* Gem sprites for the current frame: perspective-scaled diamonds centred on
  * their cell, resolved once per frame instead of once per scanline. */
 typedef struct { int16_t cx,cy; uint16_t hw,hh; } GemSprite;
@@ -240,12 +244,12 @@ static void ball_segment(int left,int right,uint16_t color,unsigned y,
     }
     if(left<BALL_LEFT) put(left,BALL_LEFT,color);
     x=BALL_LEFT;
-    end=ball_row_offset[y-BALL_TOP+1];
-    for(i=ball_row_offset[y-BALL_TOP];i<end;i++) {
-        uint8_t run=ball_runs[i];
+    end=sprite_count;
+    for(i=0;i<end;i++) {
+        uint8_t run=sprite_runs[i];
         int next=x+(int)(run>>3);
         int start=left>x?left:x,stop=right<next?right:next;
-        uint16_t overlay=foreground?foreground:ball_palette[run&7u];
+        uint16_t overlay=foreground?foreground:sprite_palette[run&7u];
         if(overlay && ball_red && !foreground) overlay=0xf800u;
         if(stop>start) put(start,stop,overlay?overlay:color);
         x=next;
@@ -405,9 +409,9 @@ static void gem_put(unsigned y,int left,int right,uint16_t color) {
     int x=BALL_LEFT,cursor=left;
     if(ball_hidden || row<(unsigned)BALL_TOP || row>=(unsigned)(BALL_TOP+BALL_HEIGHT) ||
        right<=BALL_LEFT || left>=BALL_LEFT+BALL_WIDTH) { put(left,right,color); return; }
-    end=ball_row_offset[row-BALL_TOP+1];
-    for(i=ball_row_offset[row-BALL_TOP];i<end && x<right;i++) {
-        unsigned run=ball_runs[i];
+    end=sprite_count;
+    for(i=0;i<end && x<right;i++) {
+        unsigned run=sprite_runs[i];
         int next=x+(int)(run>>3);
         if(run&7u) {                      /* opaque pixel of the ball */
             int stop=next<right?next:right;
@@ -649,7 +653,9 @@ static void gate_prepare(Road *r,uint32_t camera) {
     if(start>gate_r) start=gate_r;
     while(gd_dy<start) gate_step_down();
 }
-static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached) {
+/* Keep projection preparation outside this scanline frame: on an 8 KiB RAM
+ * target their two large stack frames must never be live at the same time. */
+static __attribute__((noinline)) void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached) {
     uint32_t first=(camera+r->depth_q8[ROAD_HEIGHT-1])>>8;
     uint32_t last=(camera+r->depth_q8[0])>>8;
     uint32_t row,previous=0xffffffffu;
@@ -670,7 +676,6 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
         ball_red=(t>>6)&1u;
         ball_hidden=t>=800;
     }
-    walls_prepare(r,camera);
     gate_prepare(r,camera);
     collect_gems(r,camera,first,last);
 #ifdef ROAD_PROFILE
@@ -684,7 +689,9 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
             if(py>=0 && py<ROAD_HEIGHT) r->center_y[row&(ROAD_ROWS-1)]=(int16_t)py;
         }
     }
+    sprite_palette=player_colors();
     for(y=0;y<ROAD_HEIGHT;y++) {
+        sprite_runs=player_row((unsigned)((int)y+ball_lift-BALL_TOP),&sprite_count);
         unsigned depth=cached?r->depth_q8[y]:divide((19552-20*y)*256,1248+12*y);
         unsigned scale=cached?r->scale_q8[y]:divide((1248+12*y)*256,52);
         int x=projected_x(-(int)r->camera_x_q8,scale);
@@ -757,7 +764,13 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
         }
     }
 }
-void road_draw(Road *r,uint32_t camera,int points,const RoadSink *s) { draw(r,camera,points,s,1); }
+void road_draw(Road *r,uint32_t camera,int points,const RoadSink *s) {
+    walls_prepare(r,camera);
+    draw(r,camera,points,s,1);
+}
 #ifdef ROAD_BENCHMARK
-void road_draw_calculated(Road *r,uint32_t camera,int points,const RoadSink *s) { draw(r,camera,points,s,0); }
+void road_draw_calculated(Road *r,uint32_t camera,int points,const RoadSink *s) {
+    walls_prepare(r,camera);
+    draw(r,camera,points,s,0);
+}
 #endif

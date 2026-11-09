@@ -85,6 +85,8 @@ typedef struct {
     void (*span)(unsigned pixels,uint16_t color,void *context);
     void *context;
 } RoadSink;
+/* Menu and gameplay execute sequentially and share this single scanline. */
+uint16_t *road_scanline_buffer(void);
 void road_init(Road *road);
 void road_pan(Road *road,int direction,uint32_t elapsed_ms);
 uint32_t road_forward(Road *road,uint32_t elapsed_ms);

@@ -1,0 +1,6 @@
+Source: https://opengameart.org/content/chiptune-music-for-arcade-games
+Track: Jump2Sky - Chiptune Comp 05 - Long Track.mp3
+Author: Oblidivm
+License: CC-BY 4.0
+Attribution: Music by Oblidivm; https://oblidivmmusic.blogspot.com
+Conversion: mono, unsigned 8-bit PCM, 8000 Hz; generated for FPGA SD playback test.

@@ -2,6 +2,8 @@
 
 本文面向刚加入项目的开发者或协作 AI，说明仓库内容、开发环境、固件与 SD 卡资源的生成方式、当前验证状态和协作约束。项目当前代码以 `main` 分支为准；开始工作前先拉取最新提交，并检查本指南引用的状态日期。
 
+2026-11-09 新增霓虹赛博朋克首页与 8 款可选角色，操作、资源和最新验证见 [CYBER_MENU_2026-11-09.md](deliverables/CYBER_MENU_2026-11-09.md)。新增 `firmware/menu.c`、`player.c`；角色美术源为 `tools/make_players.py`，完整构建会自动生成 `player_pixels.h`。
+
 ## 1. 项目概况
 
 - 私有仓库：`DBW051333/rolling-sky-cortexm0-road`。
@@ -143,7 +145,7 @@ RSART.BIN      5632 B  sha256 5E911C9D134923BE94A719DF3688DAC32C441E462AD8CE938A
 | `tools/make_hills.py` | 重建 Hills JSON 与 ROM 关卡头文件；会修改源数据，运行前先看差异 |
 | `tools/make_sd_levels.py` | 从 JSON 生成 `RSLEVELS.BIN`，并执行格式、支撑和可见面预算约束 |
 | `tools/make_appearance.py` | 生成 ROM 小型美术表和 `RSART.BIN` |
-| `tools/make_ball.py`, `make_menu_title.py` | 生成球与标题的小型固件头文件；标题生成器使用 Windows Segoe UI 字体路径 |
+| `tools/make_ball.py`, `make_menu_title.py` | 生成球与标题的小型固件头文件；当前标题生成器默认使用 Windows Arial Bold，也可传入字体路径，普通构建直接使用已提交表 |
 | `rtl/` | M0 SoC、AHB 外设、LCD、键盘、SD 与 ARM Cortex-M0 核心 |
 | `td/` | EG4S20BG256 项目、约束、PLL 和 TD 构建 TCL |
 | `VALIDATION.md` | 按日期记录的综合、下载、仿真与物理观察证据 |

@@ -39,28 +39,6 @@ set_pin_assignment	{ row[2] }	{ LOCATION = F9; IOSTANDARD = LVCMOS33; }
 set_pin_assignment	{ row[3] }	{ LOCATION = D9; IOSTANDARD = LVCMOS33; }
 # set_pin_assignment	{ beep }	{ LOCATION = H11; IOSTANDARD = LVCMOS33; }
 
-set_pin_assignment	{ LCD_CS }	{ LOCATION = N3; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_RS }	{ LOCATION = M4; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_WR }	{ LOCATION = L5; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_RD }	{ LOCATION = L1; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_RST }	{ LOCATION = K2; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[0] }	{ LOCATION = K1; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[1] }	{ LOCATION = J1; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[2] }	{ LOCATION = H1; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[3] }	{ LOCATION = H2; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[4] }	{ LOCATION = G1; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[5] }	{ LOCATION = F1; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[6] }	{ LOCATION = F2; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[7] }	{ LOCATION = E1; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[8] }	{ LOCATION = E2; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[9] }	{ LOCATION = D1; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[10] }	{ LOCATION = M5; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[11] }	{ LOCATION = M3; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[12] }	{ LOCATION = M2; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[13] }	{ LOCATION = L4; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[14] }	{ LOCATION = L3; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_DATA[15] }	{ LOCATION = P2; IOSTANDARD = LVCMOS33; }
-set_pin_assignment	{ LCD_BL_CTR }	{ LOCATION = R2; IOSTANDARD = LVCMOS33; }
 
 
 
@@ -77,3 +55,14 @@ set_pin_assignment { SD_MOSI } { LOCATION = F14; IOSTANDARD = LVCMOS33; }
 # Baseboard PWM audio: two 510R/33nF stages into the PAM8403 power amp
 # and the 3.5 mm jack (板卡和引脚说明.pdf 3.5).
 set_pin_assignment { audio_pwm } { LOCATION = F3; IOSTANDARD = LVCMOS33; }
+
+# EG4S20 comprehensive baseboard schematic, page 1, HDMI / P1 header.
+# Native Bank 3 LVDS33 outputs; TD automatically reserves/drives the N pad.
+# D0 P/N=N1/M1, D1=P4/N4, D2=J3/J4, CLK=P1/R1.
+set_pin_assignment { HDMI_P[0] } { LOCATION = N1; IOSTANDARD = LVDS33; }
+set_pin_assignment { HDMI_P[1] } { LOCATION = P4; IOSTANDARD = LVDS33; }
+set_pin_assignment { HDMI_P[2] } { LOCATION = J3; IOSTANDARD = LVDS33; }
+set_pin_assignment { HDMI_P[3] } { LOCATION = P1; IOSTANDARD = LVDS33; }
+
+# Keep the unused panel backlight off without a display controller.
+set_pin_assignment { unused_panel_bl } { LOCATION = R2; IOSTANDARD = LVCMOS33; }

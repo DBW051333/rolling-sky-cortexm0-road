@@ -3,12 +3,12 @@
 #include <stdint.h>
 #define ROAD_COLS 5
 #define ROAD_ROWS 16
-#define ROAD_WIDTH 240
+#define ROAD_WIDTH 198
 #define ROAD_HEIGHT 320
 #define ROAD_FIRST_Y 0
 #define ROAD_LINES ROAD_HEIGHT
 /* Fixed pitched camera: sin=5/13, cos=12/13; focal=384, height=4,
- * principal point=(120,56). One world tile is 256 Q8 units.
+ * principal point=(ROAD_WIDTH/2,56). One world tile is 256 Q8 units.
  * This gives 24 px/tile at top, 97.615 px/tile at bottom,
  * and 13.07 world rows across the screen height. */
 #define ROAD_BG 0x0843u
@@ -24,6 +24,10 @@
                                 four-row pad flight, landing a hair past the
                                 take-off row plus four so chains re-trigger */
 #define ROAD_SHORT_JUMP_MS 768u
+/* Collision still lands on the pad's leading edge so chained pads retrigger
+ * reliably. The sprite remains airborne for half a row (about 170 ms) and
+ * completes its descent near the centre of the destination floor. */
+#define ROAD_VISUAL_LANDING_MS 170u
 /* Gem and finish-line markers are art-independent until skins catch up.
  * Gems are drawn as a four-tone diamond the size of the local tile, not as a
  * handful of pixels, so they stay readable at the far end of the track.
@@ -71,6 +75,7 @@ typedef struct {
     uint8_t forward_remainder;
     const struct Level *level;
     uint16_t jump_ms,jump_row,jump_total;
+    uint16_t visual_jump_ms,visual_jump_total,visual_next_total;
     uint16_t death_ms;
     uint8_t death_kind;
     uint32_t gem_bits;   /* collected gems, one bit per gem index */
@@ -85,6 +90,8 @@ typedef struct {
     void (*span)(unsigned pixels,uint16_t color,void *context);
     void *context;
 } RoadSink;
+/* Menu and gameplay execute sequentially and share this single scanline. */
+uint16_t *road_scanline_buffer(void);
 void road_init(Road *road);
 void road_pan(Road *road,int direction,uint32_t elapsed_ms);
 uint32_t road_forward(Road *road,uint32_t elapsed_ms);

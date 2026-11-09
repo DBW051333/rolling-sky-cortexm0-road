@@ -50,7 +50,22 @@ unsigned level_jump_height_q8(const Road *road) {
     return (remaining*(total-remaining)*coefficient)>>12;
 }
 unsigned road_jump_height(const Road *road) {
-    return (level_jump_height_q8(road)*3u)>>5;
+    unsigned total=road->visual_jump_total,remaining=road->visual_jump_ms;
+    unsigned short_jump=total==ROAD_SHORT_JUMP_MS || total==ROAD_SHORT_JUMP_MS+ROAD_VISUAL_LANDING_MS;
+    unsigned duration=short_jump?ROAD_SHORT_JUMP_MS:ROAD_JUMP_MS;
+    unsigned extra=total>duration?total-duration:0;
+    unsigned coefficient=short_jump?12u:7u;
+    /* Leave ascent/apex unchanged. Stretch only the descending half of an
+     * isolated flight, with Q16 ratios 384/554 and 683/853 (rounded).
+     * Chained visual flights use the original duration after the first one,
+     * retaining a constant display delay rather than accumulating it. */
+    if(extra) {
+        if(remaining>duration/2+extra) remaining-=extra;
+        else remaining=(remaining*(short_jump?45426u:52475u)+32768u)>>16;
+    }
+    total=duration;
+    unsigned height=(remaining*(total-remaining)*coefficient)>>12;
+    return (height*3u)>>5;
 }
 unsigned level_tiles(const Level *level,uint32_t row,unsigned kind) {
     unsigned i,mask=0;
@@ -82,6 +97,8 @@ void level_load(Road *road,const Level *level,uint32_t *camera) {
     road->camera_x_q8=ROAD_CAMERA_CENTER;
     road->forward_remainder=0;
     road->jump_ms=0; road->jump_row=0xffffu; road->jump_total=ROAD_JUMP_MS;
+    road->visual_jump_ms=0; road->visual_jump_total=ROAD_JUMP_MS+ROAD_VISUAL_LANDING_MS;
+    road->visual_next_total=0;
     road->death_ms=0; road->death_kind=0;
     road->gem_bits=0; road->gems_got=0; road->sfx=0; road->mech_fired=0;
     road->gem_cursor=0; road->mech_cursor=0;
@@ -104,6 +121,10 @@ unsigned level_step(Road *road,uint32_t *camera,int direction,uint32_t ms) {
             if(direction) road_pan(road,direction,1);
             *camera+=road_forward(road,1);
             if(road->jump_ms) road->jump_ms--;
+            if(road->visual_jump_ms && !--road->visual_jump_ms && road->visual_next_total) {
+                road->visual_jump_ms=road->visual_jump_total=road->visual_next_total;
+                road->visual_next_total=0;
+            }
             ms--;
         }
         z=*camera+road->depth_q8[ROAD_BALL_Y];
@@ -213,6 +234,11 @@ unsigned level_step(Road *road,uint32_t *camera,int direction,uint32_t ms) {
             if(road->jump_row!=(z>>8) && ((pad|short_pad)&column)) {
                 road->jump_total=(short_pad&column)?ROAD_SHORT_JUMP_MS:ROAD_JUMP_MS;
                 road->jump_ms=road->jump_total;
+                if(road->visual_jump_ms) road->visual_next_total=road->jump_total;
+                else {
+                    road->visual_jump_total=road->jump_total+ROAD_VISUAL_LANDING_MS;
+                    road->visual_jump_ms=road->visual_jump_total;
+                }
                 road->jump_row=(uint16_t)(z>>8);
                 road->sfx|=SFX_JUMP;
             }

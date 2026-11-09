@@ -1,5 +1,7 @@
-LR_IROM1 0x00000000 0x00007000 {
- ER_IROM1 0x00000000 0x00007000 {
+; 32 KiB program RAM: 31 KiB code + 1 KiB SD palette/geometry cache.
+; The cache starts at ART_CACHE_ADDRESS in appearance.h and is writable.
+LR_IROM1 0x00000000 0x00007c00 {
+ ER_IROM1 0x00000000 0x00007c00 {
   startup.o (RESET, +First)
   .ANY (+RO)
  }

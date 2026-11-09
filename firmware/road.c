@@ -1,10 +1,13 @@
 #include "road.h"
 #include "level.h"
-#include "ball_sprite.h"
+#include "player.h"
 #include "walls.h"
 #include "glass.h"
 #include "appearance.h"
 static int ball_lift;
+static const uint8_t *sprite_runs;
+static unsigned sprite_count;
+static const uint16_t *sprite_palette;
 static unsigned wall_active,wall_cursor,ball_hidden,ball_red;
 /* ------------------------------------------------------------------------
  * Scene backdrop
@@ -21,7 +24,7 @@ static unsigned wall_active,wall_cursor,ball_hidden,ball_red;
  * column than to carry 38400 pixels: the whole backdrop costs 2.3 kB of
  * code and nothing per frame beyond sixty texture lookups.
  * --------------------------------------------------------------------- */
-#define BD_COLS 30
+#define BD_COLS ((ROAD_WIDTH+7)/8)
 #define BD_COL_W 8
 #define BD_STEP 256
 #define BD_HORIZON 100
@@ -33,7 +36,7 @@ enum { BD_PLAIN=0, BD_DISC=1, BD_CRESCENT=2, BD_STARS=3, BD_AURORA=4 };
 /* The moon sits in the upper right corner on purpose: the road's distant rows
  * project above the horizon and cover the middle of the screen, so a moon at
  * x=120 was sliced in half by the road and read as an abstract blob. */
-#define BD_MOON_X 216
+#define BD_MOON_X (ROAD_WIDTH-24)
 #define BD_RADIUS 22
 #define BD_HOLE_R 19
 #define BD_HOLE_DX (-10)
@@ -123,8 +126,8 @@ static void backdrop_prepare(unsigned scene,uint32_t travel_q8,unsigned second) 
     }
     /* Seed the run table with "sky everywhere". Without this the table starts
      * empty, every column is already at level 0 so nothing is ever dirty, and
-     * the whole stretch above the skyline paints no pixels at all -- the LCD
-     * address pointer then runs a few hundred pixels short per frame and the
+     * the whole stretch above the skyline paints no pixels at all -- the frame
+     * write cursor then runs a few hundred pixels short per frame and the
      * picture is displaced by a different amount every frame. */
     bd_runs=1;
     bd_run_x[0]=0;
@@ -133,13 +136,14 @@ static void backdrop_prepare(unsigned scene,uint32_t travel_q8,unsigned second) 
 }
 
 /* A scanline is assembled in RAM only when an overlay shares it with the
- * road. Every other line still streams straight to the LCD, so the HUD and
+ * road. Every other line still streams straight to the framebuffer, so the HUD and
  * the gems cost no extra stores and, more importantly, no second write. */
 static const RoadSink *line_sink;
 static int line_buffered;
 static unsigned line_end;
 static unsigned line_pixels;   /* pixels streamed for the current scanline */
 static uint16_t line_buf[ROAD_WIDTH];
+uint16_t *road_scanline_buffer(void) { return line_buf; }
 /* Gem sprites for the current frame: perspective-scaled diamonds centred on
  * their cell, resolved once per frame instead of once per scanline. */
 typedef struct { int16_t cx,cy; uint16_t hw,hh; } GemSprite;
@@ -169,6 +173,8 @@ void road_init(Road *r) {
     r->camera_x_q8=ROAD_CAMERA_CENTER; r->forward_remainder=0;
     r->level=0;
     r->jump_ms=0; r->jump_row=0xffffu; r->jump_total=ROAD_JUMP_MS;
+    r->visual_jump_ms=0; r->visual_jump_total=ROAD_JUMP_MS+ROAD_VISUAL_LANDING_MS;
+    r->visual_next_total=0;
     r->death_ms=0; r->death_kind=0;
     r->overlay=0;
     r->sfx=0; r->mech_fired=0;
@@ -240,12 +246,12 @@ static void ball_segment(int left,int right,uint16_t color,unsigned y,
     }
     if(left<BALL_LEFT) put(left,BALL_LEFT,color);
     x=BALL_LEFT;
-    end=ball_row_offset[y-BALL_TOP+1];
-    for(i=ball_row_offset[y-BALL_TOP];i<end;i++) {
-        uint8_t run=ball_runs[i];
+    end=sprite_count;
+    for(i=0;i<end;i++) {
+        uint8_t run=sprite_runs[i];
         int next=x+(int)(run>>3);
         int start=left>x?left:x,stop=right<next?right:next;
-        uint16_t overlay=foreground?foreground:ball_palette[run&7u];
+        uint16_t overlay=foreground?foreground:sprite_palette[run&7u];
         if(overlay && ball_red && !foreground) overlay=0xf800u;
         if(stop>start) put(start,stop,overlay?overlay:color);
         x=next;
@@ -254,7 +260,7 @@ static void ball_segment(int left,int right,uint16_t color,unsigned y,
     if(right>BALL_LEFT+BALL_WIDTH) put(left>BALL_LEFT+BALL_WIDTH?left:BALL_LEFT+BALL_WIDTH,right,color);
 }
 /* Merge the one-line wall layer before compositing the ball. Each screen
- * pixel still reaches the LCD exactly once, regardless of polygon overlap. */
+ * pixel still reaches the framebuffer exactly once, regardless of polygon overlap. */
 static void composite_segment(int left,int right,uint16_t color,unsigned y,unsigned background) {
     int start;
     if(left<0) left=0;
@@ -343,7 +349,7 @@ static void backdrop_line(int left,int right,unsigned y) {
     }
     if(b->feature==BD_STARS && y<64u) {
         unsigned h=y*2654435761u;
-        if(!((h>>9)&3u)) { int sx=6+(int)((h>>17)%228u); mx0=sx; mx1=sx+2; }
+        if(!((h>>9)&3u)) { int sx=6+(int)((h>>17)%(ROAD_WIDTH-12u)); mx0=sx; mx1=sx+2; }
     }
     for(i=0;i<bd_runs;i++) {
         int a=bd_run_x[i],e=bd_run_x[i+1];
@@ -405,9 +411,9 @@ static void gem_put(unsigned y,int left,int right,uint16_t color) {
     int x=BALL_LEFT,cursor=left;
     if(ball_hidden || row<(unsigned)BALL_TOP || row>=(unsigned)(BALL_TOP+BALL_HEIGHT) ||
        right<=BALL_LEFT || left>=BALL_LEFT+BALL_WIDTH) { put(left,right,color); return; }
-    end=ball_row_offset[row-BALL_TOP+1];
-    for(i=ball_row_offset[row-BALL_TOP];i<end && x<right;i++) {
-        unsigned run=ball_runs[i];
+    end=sprite_count;
+    for(i=0;i<end && x<right;i++) {
+        unsigned run=sprite_runs[i];
         int next=x+(int)(run>>3);
         if(run&7u) {                      /* opaque pixel of the ball */
             int stop=next<right?next:right;
@@ -649,7 +655,9 @@ static void gate_prepare(Road *r,uint32_t camera) {
     if(start>gate_r) start=gate_r;
     while(gd_dy<start) gate_step_down();
 }
-static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached) {
+/* Keep projection preparation outside this scanline frame: on an 8 KiB RAM
+ * target their two large stack frames must never be live at the same time. */
+static __attribute__((noinline)) void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached) {
     uint32_t first=(camera+r->depth_q8[ROAD_HEIGHT-1])>>8;
     uint32_t last=(camera+r->depth_q8[0])>>8;
     uint32_t row,previous=0xffffffffu;
@@ -670,7 +678,6 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
         ball_red=(t>>6)&1u;
         ball_hidden=t>=800;
     }
-    walls_prepare(r,camera);
     gate_prepare(r,camera);
     collect_gems(r,camera,first,last);
 #ifdef ROAD_PROFILE
@@ -684,7 +691,9 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
             if(py>=0 && py<ROAD_HEIGHT) r->center_y[row&(ROAD_ROWS-1)]=(int16_t)py;
         }
     }
+    sprite_palette=player_colors();
     for(y=0;y<ROAD_HEIGHT;y++) {
+        sprite_runs=player_row((unsigned)((int)y+ball_lift-BALL_TOP),&sprite_count);
         unsigned depth=cached?r->depth_q8[y]:divide((19552-20*y)*256,1248+12*y);
         unsigned scale=cached?r->scale_q8[y]:divide((1248+12*y)*256,52);
         int x=projected_x(-(int)r->camera_x_q8,scale);
@@ -757,7 +766,13 @@ static void draw(Road *r,uint32_t camera,int points,const RoadSink *s,int cached
         }
     }
 }
-void road_draw(Road *r,uint32_t camera,int points,const RoadSink *s) { draw(r,camera,points,s,1); }
+void road_draw(Road *r,uint32_t camera,int points,const RoadSink *s) {
+    walls_prepare(r,camera);
+    draw(r,camera,points,s,1);
+}
 #ifdef ROAD_BENCHMARK
-void road_draw_calculated(Road *r,uint32_t camera,int points,const RoadSink *s) { draw(r,camera,points,s,0); }
+void road_draw_calculated(Road *r,uint32_t camera,int points,const RoadSink *s) {
+    walls_prepare(r,camera);
+    draw(r,camera,points,s,0);
+}
 #endif

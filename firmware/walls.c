@@ -17,14 +17,20 @@ typedef struct {
 } Face;
 #define FACE_CACHE 44
 #define SCENERY_ROWS 4    /* how far ahead scenery is worth three faces a box */
-static Face faces[FACE_CACHE];
+/* Game faces/spans and the menu mesh are mutually exclusive. */
+static union {
+    struct { Face polygons[FACE_CACHE]; WallSpan spans[89]; } game;
+    uint8_t menu[2120];
+} scenery;
+#define faces scenery.game.polygons
+void *walls_menu_cache(void) { return scenery.menu; }
 static unsigned face_count;
 /* Static scenery may not exhaust the cache before the sparse mechanisms are
  * appended, or a busy row of walls would silently erase a laser. */
 static unsigned face_limit=32;
 static unsigned static_count;   /* faces[0..static_count) is scenery, nearest first */
 static unsigned face_foreground;
-WallSpan wall_spans[89];   /* 2*FACE_CACHE+1: every face adds two edges */
+WallSpan *const wall_spans=scenery.game.spans;   /* 2*FACE_CACHE+1: every face adds two edges */
 unsigned wall_span_count;
 static int first_y,last_y;
 static int quotient(int n,int d) {
@@ -37,7 +43,7 @@ static int quotient(int n,int d) {
 static __attribute__((noinline)) Point project(int x,int z,int h) {
     int d=12*z+20*256-5*h;
     Point p;
-    p.x=(int16_t)(120+quotient(4992*x,d));
+    p.x=(int16_t)(ROAD_WIDTH/2+quotient(4992*x,d));
     p.y=(int16_t)(56+quotient(384*(48*256-5*z-12*h),d));
     return p;
 }

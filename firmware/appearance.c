@@ -48,7 +48,7 @@ void appearance_load(int card) {
             if(b->x<0 || b->z<0 || b->width<=0 || b->depth<=0 ||
                b->x+b->width>256 || b->z+b->depth>256 ||
                b->bottom<0 || b->top<=b->bottom || b->top>512 ||
-               b->front>=26 || b->side>=26 || b->roof>=26 || (b->flags&~3u)) return;
+               b->front>=26 || b->side>=26 || b->roof>=26 || (b->flags&~7u)) return;
         }
     }
     art_sd_loaded=1;

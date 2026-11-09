@@ -17,7 +17,11 @@ try {
         # frame, glass_moving_mask() once a row, obstacle_*() once a frame from
         # level_step(), and the per-pixel work all lives in road.c at -O2.
         $opt=if($file -in @('appearance','main','sd_levels','walls','level','glass','sound','obstacle')){'-Oz'}else{'-O2'}
-        & "$bin\armclang.exe" --target=arm-arm-none-eabi -mcpu=cortex-m0 -mthumb $opt -ffreestanding -fno-builtin -fno-common -g -Wall -Wextra @flags -c "$file.c" -o "Output/$file.o"
+        # AC 6.24 unrolls road.c enough to overflow the 28 KiB code region.
+        # Retain -O2 for rendering, but keep its loops compact on Cortex-M0.
+        $loopFlags=@()
+        if($file -eq 'road'){$loopFlags=@('-fno-unroll-loops')}
+        & "$bin\armclang.exe" --target=arm-arm-none-eabi -mcpu=cortex-m0 -mthumb $opt @loopFlags -ffreestanding -fno-builtin -fno-common -g -Wall -Wextra @flags -c "$file.c" -o "Output/$file.o"
         if($LASTEXITCODE){throw "Compile failed: $file"}
     }
     & "$bin\armasm.exe" --cpu Cortex-M0 startup.s -o Output/startup.o

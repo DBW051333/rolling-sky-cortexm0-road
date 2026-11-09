@@ -64,8 +64,8 @@ static unsigned step,step_ms,v3_ms;
  * links no EABI division helper, and -Oz turns a divide by a constant back
  * into one. 26 per step is the same 1/10 within 2%, and the top step is
  * pinned at exactly 256 so full volume is bit-for-bit what it used to be. */
-static uint8_t master=SOUND_VOLUME_MAX;
-static unsigned scale_q8=256u;
+static uint8_t master;
+static unsigned scale_q8;
 static unsigned scaled(unsigned vol) {
     unsigned v=(vol*scale_q8)>>8;
     return v>15u?15u:v;
@@ -99,6 +99,8 @@ static void burst(unsigned note,unsigned wave,unsigned vol,unsigned ms,int delta
 }
 void sound_init(void) {
     unsigned i;
+    /* Reset_Handler enters main directly without a C runtime data copy. */
+    master=SOUND_VOLUME_MAX; scale_q8=256u;
     AU_CTRL=0;
     for(i=0;i<4u;i++) { AU_VOICE(i,0)=0; AU_VOICE(i,1)=0; AU_VOICE(i,2)=0; }
     step=0; step_ms=0; v3_ms=0;

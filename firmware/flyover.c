@@ -29,12 +29,12 @@ static int bend(unsigned n) {
 static Point project(int x,int z,int h) {
     Point p;int d;
     if(!scene) {
-        p.x=(int16_t)(99+divide(160*x,z));
-        p.y=(int16_t)(132+divide(160*h,z));return p;
+        p.x=(int16_t)road_display_x(ROAD_WIDTH/2+divide(320*x,z));
+        p.y=(int16_t)(264+divide(320*h,z));return p;
     }
     d=4*z+3*(256-h);
-    p.x=(int16_t)(99+divide(800*(x-camera_x),d));
-    p.y=(int16_t)(125+divide(160*(4*(256-h)-3*z),d));return p;
+    p.x=(int16_t)road_display_x(ROAD_WIDTH/2+divide(1600*(x-camera_x),d));
+    p.y=(int16_t)(250+divide(320*(4*(256-h)-3*z),d));return p;
 }
 static uint16_t fog(uint16_t c,int z) {
     unsigned f=(unsigned)z>>5;
@@ -165,21 +165,32 @@ void flyover_prepare(unsigned time) {
 void flyover_line(uint16_t *pixels,unsigned y) {
     unsigned x,i;
     uint16_t sky=scene==0?0x0803u:y<40?0x4bf6u:y<80?0x8d5au:0x9d97u;
-    for(x=0;x<ROAD_WIDTH;x++) {
-        uint16_t c=sky;
-        if(!scene) {
-            int dx=(int)x-151+(int)(clock_ms>>10),dy=(int)y-105-(int)(clock_ms>>12),d=dx*dx+dy*dy;
-            if(((x*17u+y*37u)&127u)==0 && (noise(x+y*198)&7u)==0)c=0x8412u;
-            if(d<1764) {
-                c=dx+dy/2< -12?0x96bfu:dx+dy/2<28?0x2c57u:0x1108u;
-                if(((y+(unsigned)(dx*dx>>5))&15u)<3 && dx+dy/2<28)c=0xb7bfu;
+    road_fill_pixels(pixels,ROAD_WIDTH,sky);
+    if(!scene) {
+        int cx=151-(int)(clock_ms>>10),dy=(int)y-105-(int)(clock_ms>>12);
+        unsigned star=(0u-y*37u*113u)&127u;
+        for(x=star;x<ROAD_WIDTH;x+=128)
+            if((noise(x+y*198)&7u)==0) pixels[x]=0x8412u;
+        if(dy*dy<1764) {
+            int left=cx-41,right=cx+42;
+            if(left<0)left=0;if(right>ROAD_WIDTH)right=ROAD_WIDTH;
+            for(;left<right;left++) {
+                int dx=left-cx,square=dx*dx;
+                if(square+dy*dy<1764) {
+                    uint16_t c=dx+dy/2< -12?0x96bfu:dx+dy/2<28?0x2c57u:0x1108u;
+                    if(((y+(unsigned)(square>>5))&15u)<3 && dx+dy/2<28)c=0xb7bfu;
+                    pixels[left]=c;
+                }
             }
-        } else if(y>68) {
+        }
+    } else if(y>68) {
+        uint16_t land=scene==2?0x5b91u:scene==3?0x3b49u:0x6372u;
+        if(y>104) road_fill_pixels(pixels,ROAD_WIDTH,land);
+        else for(x=0;x<ROAD_WIDTH;x++) {
             unsigned ridge=(x+37u)&63u;if(ridge>32)ridge=64-ridge;
             if(scene==2)ridge=20+(((x>>3)*37u)^((x>>3)*7u))%32u;
-            if(y>78+ridge/2)c=scene==2?0x5b91u:scene==3?0x3b49u:0x6372u;
+            if(y>78+ridge/2)pixels[x]=land;
         }
-        pixels[x]=c;
     }
     for(i=0;i<count;i++) {
         Face *f=&mesh[i];int left=32767,right=-32768;unsigned edge;
@@ -192,15 +203,17 @@ void flyover_line(uint16_t *pixels,unsigned y) {
             if(hit<left)left=hit;if(hit>right)right=hit;
         }
         if(left>0)left--;if(left<0)left=0;if(right>ROAD_WIDTH)right=ROAD_WIDTH;
+        if(left>=right)continue;
         {
-        unsigned width=(unsigned)(right-left),mask=width>=48?7u:width>=24?3u:1u;
-        for(;left<right;left++) {
-            uint16_t c=f->color;
-            if(scene==2 && (c&1u)) {
-                if((y&mask)<(mask>>1)+1 && ((unsigned)left&mask)<(mask>>1)+1)c=0xaddbu;
-            }
-            pixels[left]=c;
-        }
+            unsigned width=(unsigned)(right-left),mask=width>=48?7u:width>=24?3u:1u;
+            if(scene==2 && (f->color&1u) && (y&mask)<(mask>>1)+1) {
+                while(left<right) {
+                    int end=left+1;
+                    uint16_t c=((unsigned)left&mask)<(mask>>1)+1?0xaddbu:f->color;
+                    while(end<right && ((((unsigned)end&mask)<(mask>>1)+1)?0xaddbu:f->color)==c)end++;
+                    road_fill_pixels(pixels+left,(unsigned)(end-left),c);left=end;
+                }
+            } else road_fill_pixels(pixels+left,(unsigned)(right-left),f->color);
         }
     }
     /* A short cinematic fade conceals the space/terrain camera change. */

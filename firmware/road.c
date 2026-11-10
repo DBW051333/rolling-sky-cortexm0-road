@@ -8,7 +8,7 @@ static int ball_lift;
 static const uint8_t *sprite_runs;
 static unsigned sprite_count;
 static const uint16_t *sprite_palette;
-static unsigned wall_active,wall_cursor,ball_hidden,ball_red;
+static unsigned wall_active,wall_cursor,ball_hidden,ball_red,ball_line_active;
 /* ------------------------------------------------------------------------
  * Scene backdrop
  *
@@ -92,7 +92,7 @@ static const Backdrop backdrops[BD_LOOKS]={
 /* Per-scanline state. The active set only grows as y falls, so a column is
  * re-tested only until it turns on: at most BD_COLS changes per frame. */
 static uint8_t bd_far[BD_COLS],bd_near[BD_COLS],bd_level[BD_COLS];
-static uint8_t bd_run_x[BD_COLS+1],bd_run_l[BD_COLS+1];
+static uint16_t bd_run_x[BD_COLS+1],bd_run_l[BD_COLS+1];
 static unsigned bd_runs;
 static const Backdrop *bd_scene;
 static unsigned bd_sample(const uint8_t *prof,unsigned phase,unsigned amp) {
@@ -132,7 +132,7 @@ static void backdrop_prepare(unsigned scene,uint32_t travel_q8,unsigned second) 
     bd_runs=1;
     bd_run_x[0]=0;
     bd_run_l[0]=0;
-    bd_run_x[1]=(uint8_t)(BD_COL_W*BD_COLS);
+    bd_run_x[1]=(uint16_t)(BD_COL_W*BD_COLS);
 }
 
 /* A scanline is assembled in RAM only when an overlay shares it with the
@@ -142,7 +142,7 @@ static const RoadSink *line_sink;
 static int line_buffered;
 static unsigned line_end;
 static unsigned line_pixels;   /* pixels streamed for the current scanline */
-static uint16_t line_buf[ROAD_WIDTH];
+static uint16_t line_buf[ROAD_WIDTH] __attribute__((aligned(4)));
 uint16_t *road_scanline_buffer(void) { return line_buf; }
 /* Gem sprites for the current frame: perspective-scaled diamonds centred on
  * their cell, resolved once per frame instead of once per scanline. */
@@ -167,8 +167,8 @@ void road_init(Road *r) {
     unsigned i;
     for(i=0;i<ROAD_ROWS;i++) { r->tags[i]=0xffffffffu; r->masks[i]=31; r->center_y[i]=-1; }
     for(i=0;i<ROAD_HEIGHT;i++) {
-        r->depth_q8[i]=(uint16_t)divide((19552-20*i)*256,1248+12*i);
-        r->scale_q8[i]=(uint16_t)divide((1248+12*i)*256,52);
+        r->depth_q8[i]=(uint16_t)divide((39104-20*i)*256,2496+12*i);
+        r->scale_q8[i]=(uint16_t)divide((2496+12*i)*256,52);
     }
     r->camera_x_q8=ROAD_CAMERA_CENTER; r->forward_remainder=0;
     r->level=0;
@@ -219,9 +219,22 @@ int road_query(const Road *r,int32_t x,uint32_t z,RoadPoint *p) {
  * positive lengths. Full scanline coverage also erases previous pan positions. */
 /* Kept out of line: every road span would otherwise carry its own copy of
  * the store loop, and this image has little code space to spare. */
+void road_fill_pixels(uint16_t *pixels,unsigned count,uint16_t color) {
+    typedef uint32_t AliasWord __attribute__((may_alias));
+    AliasWord *words;
+    uint32_t pair=(uint32_t)color|((uint32_t)color<<16);
+    if(((uintptr_t)pixels&2u) && count) { *pixels++=color;count--; }
+    words=(AliasWord *)pixels;
+    while(count>=8) {
+        words[0]=pair;words[1]=pair;words[2]=pair;words[3]=pair;
+        words+=4;count-=8;
+    }
+    while(count>=2) { *words++=pair;count-=2; }
+    if(count) *(uint16_t *)words=color;
+}
 static __attribute__((noinline)) void put_buffered(int left,int right,uint16_t color) {
     if((unsigned)right>line_end) line_end=(unsigned)right;
-    while(left<right) line_buf[left++]=(uint16_t)color;
+    road_fill_pixels(line_buf+left,(unsigned)(right-left),color);
 }
 static void put(int left,int right,uint16_t color) {
     if(left<0) left=0;
@@ -233,23 +246,32 @@ static void put(int left,int right,uint16_t color) {
         line_sink->span((unsigned)(right-left),color,line_sink->context);
     }
 }
-static void ball_segment(int left,int right,uint16_t color,unsigned y,
+static void ball_overlay_segment(int left,int right,uint16_t color,unsigned y,
                          uint16_t foreground) {
-    unsigned i,end;
+    unsigned i,end,source_x=0;
     int x;
     if(left<0) left=0;
     if(right>ROAD_WIDTH) right=ROAD_WIDTH;
     if(right<=left) return;
     y+=ball_lift; /* Screen row -> sprite row; reuse the same ball data. */
-    if(ball_hidden || y<BALL_TOP || y>=BALL_TOP+BALL_HEIGHT || right<=BALL_LEFT || left>=BALL_LEFT+BALL_WIDTH) {
+    if(ball_hidden || y<GAME_BALL_TOP || y>=GAME_BALL_TOP+GAME_BALL_HEIGHT || right<=GAME_BALL_LEFT || left>=GAME_BALL_LEFT+GAME_BALL_WIDTH) {
         put(left,right,color); return;
     }
-    if(left<BALL_LEFT) put(left,BALL_LEFT,color);
-    x=BALL_LEFT;
+    if(!line_buffered && line_sink->sprite_span) {
+        if(foreground)put(left,right,color);
+        else {
+            line_pixels+=(unsigned)(right-left);
+            line_sink->sprite_span((unsigned)(right-left),color,line_sink->context);
+        }
+        return;
+    }
+    if(left<GAME_BALL_LEFT) put(left,GAME_BALL_LEFT,color);
+    x=GAME_BALL_LEFT;
     end=sprite_count;
     for(i=0;i<end;i++) {
         uint8_t run=sprite_runs[i];
-        int next=x+(int)(run>>3);
+        source_x+=run>>3;
+        int next=GAME_BALL_LEFT+(int)((source_x*15u)>>3);
         int start=left>x?left:x,stop=right<next?right:next;
         uint16_t overlay=foreground?foreground:sprite_palette[run&7u];
         if(overlay && ball_red && !foreground) overlay=0xf800u;
@@ -257,7 +279,12 @@ static void ball_segment(int left,int right,uint16_t color,unsigned y,
         x=next;
         if(x>=right) break;
     }
-    if(right>BALL_LEFT+BALL_WIDTH) put(left>BALL_LEFT+BALL_WIDTH?left:BALL_LEFT+BALL_WIDTH,right,color);
+    if(right>GAME_BALL_LEFT+GAME_BALL_WIDTH) put(left>GAME_BALL_LEFT+GAME_BALL_WIDTH?left:GAME_BALL_LEFT+GAME_BALL_WIDTH,right,color);
+}
+static __attribute__((always_inline)) inline void ball_segment(int left,int right,uint16_t color,
+                                                               unsigned y,uint16_t foreground) {
+    if(ball_line_active) ball_overlay_segment(left,right,color,y,foreground);
+    else put(left,right,color);
 }
 /* Merge the one-line wall layer before compositing the ball. Each screen
  * pixel still reaches the framebuffer exactly once, regardless of polygon overlap. */
@@ -313,11 +340,11 @@ static void backdrop_line(int left,int right,unsigned y) {
         bd_runs=0;
         for(c=0;c<BD_COLS;c++) {
             if(bd_runs && bd_run_l[bd_runs-1]==bd_level[c]) continue;
-            bd_run_x[bd_runs]=(uint8_t)(c*BD_COL_W);
+            bd_run_x[bd_runs]=(uint16_t)(c*BD_COL_W);
             bd_run_l[bd_runs]=(uint8_t)bd_level[c];
             bd_runs++;
         }
-        bd_run_x[bd_runs]=(uint8_t)(BD_COL_W*BD_COLS);
+        bd_run_x[bd_runs]=(uint16_t)(BD_COL_W*BD_COLS);
     }
     band=y>>4; if(band>=BD_BANDS-1) band=BD_BANDS-2;
     sky=bd_ramp(b->sky[band],b->sky[band+1],y&15u);
@@ -391,12 +418,12 @@ static void backdrop_line(int left,int right,unsigned y) {
 static int projected_x(int world_x_q8,unsigned scale_q8) {
     int n=world_x_q8*(int)scale_q8;
     /* Signed truncation towards zero without an ARM division helper. */
-    return ROAD_WIDTH/2+(n<0?-(int)((unsigned)-n>>16):(int)((unsigned)n>>16));
+    return road_display_x(ROAD_WIDTH/2+(n<0?-(int)((unsigned)-n>>16):(int)((unsigned)n>>16)));
 }
 /* Screen row of a world depth; shared by the row centres and the gems so a
  * sprite sits exactly on the row it belongs to. */
 static int projected_y(int depth) {
-    return 56+signed_divide(384*(48*256-5*depth),(unsigned)(12*depth+20*256));
+    return 112+signed_divide(768*(48*256-5*depth),(unsigned)(12*depth+20*256));
 }
 /* Diamond half-width for one row of a gem: hw scaled by (hh-|dy|)/hh. */
 static unsigned gem_halfwidth(const GemSprite *g,int dy) {
@@ -407,14 +434,15 @@ static unsigned gem_halfwidth(const GemSprite *g,int dy) {
  * diamond must never paint over it. Clip each gem run against the opaque runs
  * of the sprite row instead of drawing the gem last. */
 static void gem_put(unsigned y,int left,int right,uint16_t color) {
-    unsigned row=(unsigned)((int)y+ball_lift),i,end;
-    int x=BALL_LEFT,cursor=left;
-    if(ball_hidden || row<(unsigned)BALL_TOP || row>=(unsigned)(BALL_TOP+BALL_HEIGHT) ||
-       right<=BALL_LEFT || left>=BALL_LEFT+BALL_WIDTH) { put(left,right,color); return; }
+    unsigned row=(unsigned)((int)y+ball_lift),i,end,source_x=0;
+    int x=GAME_BALL_LEFT,cursor=left;
+    if(ball_hidden || row<(unsigned)GAME_BALL_TOP || row>=(unsigned)(GAME_BALL_TOP+GAME_BALL_HEIGHT) ||
+       right<=GAME_BALL_LEFT || left>=GAME_BALL_LEFT+GAME_BALL_WIDTH) { put(left,right,color); return; }
     end=sprite_count;
     for(i=0;i<end && x<right;i++) {
         unsigned run=sprite_runs[i];
-        int next=x+(int)(run>>3);
+        source_x+=run>>3;
+        int next=GAME_BALL_LEFT+(int)((source_x*15u)>>3);
         if(run&7u) {                      /* opaque pixel of the ball */
             int stop=next<right?next:right;
             if(x>cursor && x<right) put(cursor,x,color);
@@ -485,6 +513,7 @@ static int gem_touches(unsigned y) {
 }
 static void flush_line(void) {
     unsigned x=0;
+    if(line_sink->pixels) { line_sink->pixels(line_buf,ROAD_WIDTH,line_sink->context);return; }
     while(x<ROAD_WIDTH) {
         uint16_t color=line_buf[x];
         unsigned end=x+1;
@@ -662,6 +691,7 @@ static __attribute__((noinline)) void draw(Road *r,uint32_t camera,int points,co
     uint32_t last=(camera+r->depth_q8[0])>>8;
     uint32_t row,previous=0xffffffffu;
     unsigned y,col,mask=31,pads=0,glass=0,shorts=0,bodies=0,barrier=0,warn=0;
+    uint32_t tile_materials[ROAD_COLS];
     unsigned ball_row=(unsigned)((camera+r->depth_q8[ROAD_BALL_Y])>>8);
     const Appearance *look=appearance_for(r->level,ball_row);
     uint16_t body_color=look->solid_front,barrier_color=look->barrier_front;
@@ -692,10 +722,11 @@ static __attribute__((noinline)) void draw(Road *r,uint32_t camera,int points,co
         }
     }
     sprite_palette=player_colors();
+    if(s->sprite_prepare)s->sprite_prepare(GAME_BALL_LEFT,GAME_BALL_TOP-ball_lift,ball_red,s->context);
     for(y=0;y<ROAD_HEIGHT;y++) {
-        sprite_runs=player_row((unsigned)((int)y+ball_lift-BALL_TOP),&sprite_count);
-        unsigned depth=cached?r->depth_q8[y]:divide((19552-20*y)*256,1248+12*y);
-        unsigned scale=cached?r->scale_q8[y]:divide((1248+12*y)*256,52);
+        ball_line_active=!ball_hidden && (unsigned)((int)y+ball_lift-GAME_BALL_TOP)<GAME_BALL_HEIGHT;
+        unsigned depth=cached?r->depth_q8[y]:divide((39104-20*y)*256,2496+12*y);
+        unsigned scale=cached?r->scale_q8[y]:divide((2496+12*y)*256,52);
         int x=projected_x(-(int)r->camera_x_q8,scale);
         int middle,horizontal;
         row=(camera+depth)>>8;
@@ -714,24 +745,40 @@ static __attribute__((noinline)) void draw(Road *r,uint32_t camera,int points,co
             body_color=((const uint16_t *)look)[
                 appearance_model(look->solid_model)->boxes[0].front];
             barrier_color=look->barrier_front;
+            for(col=0;col<ROAD_COLS;col++) {
+                uint16_t color=look->light;
+                if(pads&(1u<<col))color=look->pad;
+                if(shorts&(1u<<col))color=look->short_pad;
+                if(glass&(1u<<col))color=look->fragile;
+                if(bodies&(1u<<col))color=body_color;
+                if(barrier&(1u<<col))color=barrier_color;
+                if(warn&(1u<<col))color=look->dark;
+                tile_materials[col]=(uint32_t)((glass&(1u<<col))?look->fragile_edge:look->grid)<<16|color;
+            }
+            if(s->tile_materials)s->tile_materials(tile_materials,s->context);
         }
         middle=r->center_y[row&(ROAD_ROWS-1)]; horizontal=row!=previous;
         wall_active=(unsigned)walls_line(y); wall_cursor=0;
         line_buffered=(r->overlay && y<r->overlay->rows) || gem_touches(y) || gate_here(y);
+        if(ball_line_active && (line_buffered || !s->sprite_span))
+            sprite_runs=player_row(((unsigned)((int)y+ball_lift-GAME_BALL_TOP)*17u)>>5,&sprite_count);
         line_end=0;
         line_pixels=0;
         s->begin_line(0,y,ROAD_WIDTH,s->context);
         backdrop_line(0,x,y);
+        if(s->tile_row && mask==31 && !line_buffered && !wall_active && !points &&
+           (!((pads|shorts)) || middle<0 || (int)y<middle-1 || (int)y>middle+1)) {
+            int right=projected_x(ROAD_COLS*256-(int)r->camera_x_q8,scale);
+            int left_clipped=x<0?0:x>ROAD_WIDTH?ROAD_WIDTH:x;
+            int right_clipped=right<0?0:right>ROAD_WIDTH?ROAD_WIDTH:right;
+            s->tile_row(scale,r->camera_x_q8,(unsigned)horizontal|(ball_line_active<<1),s->context);
+            line_pixels+=(unsigned)(right_clipped-left_clipped);
+            x=right;
+        } else
         for(col=0;col<ROAD_COLS;col++) {
             int right=projected_x((int)((col+1)*256)-(int)r->camera_x_q8,scale);
             uint16_t grid=look->grid;
-            uint16_t color=look->light;
-            if(pads&(1u<<col)) color=look->pad;
-            if(shorts&(1u<<col)) color=look->short_pad;
-            if(glass&(1u<<col)) color=look->fragile;
-            if(bodies&(1u<<col)) color=body_color;
-            if(barrier&(1u<<col)) color=barrier_color;
-            if(warn&(1u<<col)) color=look->dark;
+            uint16_t color=(uint16_t)tile_materials[col];
             if(!(mask&(1u<<col))) backdrop_line(x,right,y);
             else if(horizontal) composite_segment(x,right,(glass&(1u<<col))?look->fragile_edge:grid,y,0);
             else {

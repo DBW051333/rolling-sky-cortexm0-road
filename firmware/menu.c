@@ -2,11 +2,15 @@
 #include "player.h"
 #include "flyover.h"
 #include "menu_title.h"
+#ifdef MENU_VIDEO
+#include "menu_video.h"
+#endif
 #define CYAN 0x07ffu
 #define PINK 0xf91fu
 #define WHITE 0xe7ffu
 #define MUTED 0x6bb2u
 #define PANEL 0x0865u
+#define MENU_WIDTH (ROAD_WIDTH/2)
 static uint16_t *pixels;
 static unsigned row;
 /* Column bitmaps, A..Z then 0..9. Drawn into the shared scanline. */
@@ -26,8 +30,8 @@ static __attribute__((noinline)) void rect(int x,int y,int w,int h,uint16_t c) {
     int end=x+w;
     if((int)row<y || (int)row>=y+h) return;
     if(x<0) x=0;
-    if(end>ROAD_WIDTH) end=ROAD_WIDTH;
-    while(x<end) pixels[x++]=c;
+    if(end>MENU_WIDTH) end=MENU_WIDTH;
+    while(x<end) { pixels[x*2]=c; pixels[x*2+1]=c; x++; }
 }
 static __attribute__((noinline)) void label(int x,unsigned y,const char *s,unsigned large,uint16_t c) {
     unsigned dy,col;
@@ -55,45 +59,65 @@ static void number(int x,unsigned y,unsigned n,unsigned large,uint16_t c) {
     label(x,y,s,large,c);
 }
 static void panel(unsigned top,unsigned height,uint16_t edge,int active) {
-    rect(10,(int)top,ROAD_WIDTH-20,(int)height,PANEL);
-    rect(10,(int)top,ROAD_WIDTH-20,1,edge);
+    rect(10,(int)top,MENU_WIDTH-20,(int)height,PANEL);
+    rect(10,(int)top,MENU_WIDTH-20,1,edge);
     rect(10,(int)top,2,(int)height,edge);
-    rect(10,(int)(top+height-1),ROAD_WIDTH-20,1,active?edge:0x210cu);
-    rect(ROAD_WIDTH-12,(int)top,2,(int)height,0x210cu);
+    rect(10,(int)(top+height-1),MENU_WIDTH-20,1,active?edge:0x210cu);
+    rect(MENU_WIDTH-12,(int)top,2,(int)height,0x210cu);
     rect(10,(int)top,5,3,0x0002u);
-    rect(ROAD_WIDTH-15,(int)(top+height-3),5,3,0x0002u);
+    rect(MENU_WIDTH-15,(int)(top+height-3),5,3,0x0002u);
 }
 static unsigned title_bit(int x,int y) {
     if(x<0 || x>=174 || y<0 || y>=30) return 0;
     return (title_mask[y*22+(x>>3)]>>(x&7))&1u;
 }
-static void title(void) {
-    int x,y=(int)row-27;
-    static const uint16_t face_color[8]={0xffffu,0xe7ffu,0xbfffu,0x9effu,0x5e7fu,0x34fau,0x2bd5u,0x2373u};
-    if(y<0 || y>=37) return;
-    for(x=0;x<181;x++) {
-        uint16_t color=0;
-        /* Seven offset slices make a solid extrusion, not a drop shadow. */
-        if(title_bit(x-6,y-6) || title_bit(x-4,y-4) || title_bit(x-2,y-2)) color=0x116bu;
-        if(title_bit(x-1,y-1)) color=0x36bbu;
+static uint8_t title_cache[37][89];
+static unsigned title_cached;
+static const uint16_t title_colors[12]={0,0xffffu,0xe7ffu,0xbfffu,0x9effu,0x5e7fu,
+    0x34fau,0x2bd5u,0x2373u,0x116bu,0x36bbu,0x1393u};
+static void prepare_title(void) {
+    int x,y;
+    for(y=0;y<37;y++) for(x=0;x<177;x++) {
+        unsigned ink=0;
+        if(title_bit(x-6,y-6) || title_bit(x-4,y-4) || title_bit(x-2,y-2))ink=9;
+        if(title_bit(x-1,y-1))ink=10;
         if(title_bit(x,y)) {
-            color=face_color[(unsigned)y>>2];
-            if(!title_bit(x-1,y) || !title_bit(x,y-1)) color=0xffffu;
-            else if(!title_bit(x+1,y) || !title_bit(x,y+1)) color=0x1393u;
+            ink=1+((unsigned)y>>2);
+            if(!title_bit(x-1,y) || !title_bit(x,y-1))ink=1;
+            else if(!title_bit(x+1,y) || !title_bit(x,y+1))ink=11;
         }
-        if(color) pixels[9+x]=color;
+        if(x&1)title_cache[y][x>>1]|=(uint8_t)(ink<<4);
+        else title_cache[y][x>>1]=(uint8_t)ink;
+    }
+    title_cached=1;
+}
+static void title(void) {
+    unsigned x;
+    int y=(int)row-27;
+    if(y<0 || y>=37)return;
+    if(!title_cached)prepare_title();
+    for(x=0;x<177;x++) {
+        unsigned ink=(title_cache[y][x>>1]>>((x&1)*4))&15u;
+        if(ink) pixels[(3+x)*2]=pixels[(3+x)*2+1]=title_colors[ink];
     }
 }
 void menu_draw(const MenuState *s,uint32_t ticks,const RoadSink *sink) {
-    unsigned x,time=flyover_time(ticks),stage=time<20000?0:time<40000?1:time<60000?2:3;
+    unsigned x,native_row,time=flyover_time(ticks),stage=time<20000?0:time<40000?1:time<60000?2:3;
     const uint16_t *palette=player_colors();
     pixels=road_scanline_buffer();
+#ifndef MENU_VIDEO
     flyover_prepare(time);
-    for(row=0;row<320;row++) {
+#endif
+    for(native_row=0;native_row<ROAD_HEIGHT;native_row++) {
+        row=native_row/2;
         static const char locations[4][16]={"DEEP SPACE","RIVER MOUNTAINS","METROPOLIS","FOREST CANOPY"};
-        flyover_line(pixels,row);
+#ifdef MENU_VIDEO
+        road_fill_pixels(pixels,ROAD_WIDTH,menu_video_active()?0u:ROAD_BG);
+#else
+        flyover_line(pixels,native_row);
+#endif
         label(12,9,"WORLD TOUR",0,WHITE);
-        label(ROAD_WIDTH-36,9,s->card?"SD":"ROM",0,s->error?0xf800u:s->card?CYAN:WHITE);
+        label(MENU_WIDTH-36,9,s->card?"SD":"ROM",0,s->error?0xf800u:s->card?CYAN:WHITE);
         title();
         label(12,76,locations[stage],0,WHITE);
         rect(12,88,64,1,0x298du);
@@ -108,10 +132,10 @@ void menu_draw(const MenuState *s,uint32_t ticks,const RoadSink *sink) {
         }
         panel(211,34,s->focus?0x3993u:CYAN,!s->focus);
         label(22,218,s->focus?"LEVEL":"LEVEL <    >",0,s->focus?MUTED:CYAN);
-        number(ROAD_WIDTH-38,218,s->selected+1,1,WHITE);
+        number(MENU_WIDTH-38,218,s->selected+1,1,WHITE);
         label(22,233,"BEST",0,MUTED); number(52,233,s->best,0,WHITE);
         label(76,233,"GEMS",0,MUTED); number(106,233,s->gems,0,WHITE);
-        number(ROAD_WIDTH-38,233,s->total,0,MUTED);
+        number(MENU_WIDTH-38,233,s->total,0,MUTED);
         panel(250,69,s->focus?PINK:0x3993u,s->focus);
         label(22,257,s->focus?"SKIN <    >":"SKIN",0,s->focus?PINK:MUTED);
         label(22,274,player_name(),0,WHITE);
@@ -120,14 +144,15 @@ void menu_draw(const MenuState *s,uint32_t ticks,const RoadSink *sink) {
         label(22,306,"2 SELECT",0,CYAN);
         label(76,306,s->focus?"8 SET":"8 GO",0,PINK);
         if(row>=251 && row<319) {
-            unsigned n,i,pos=ROAD_WIDTH-84; const uint8_t *runs=player_row(row-251,&n);
+            unsigned n,i,pos=MENU_WIDTH-84; const uint8_t *runs=player_row(row-251,&n);
             for(i=0;i<n;i++) {
                 unsigned len=runs[i]>>3,index=runs[i]&7u;
                 if(index) rect((int)pos,(int)row,(int)len,1,palette[index]);
                 pos+=len;
             }
         }
-        sink->begin_line(0,row,ROAD_WIDTH,sink->context);
+        sink->begin_line(0,native_row,ROAD_WIDTH,sink->context);
+        if(sink->pixels) { sink->pixels(pixels,ROAD_WIDTH,sink->context);continue; }
         for(x=0;x<ROAD_WIDTH;) {
             unsigned end=x+1; uint16_t color=pixels[x];
             while(end<ROAD_WIDTH && pixels[end]==color) end++;

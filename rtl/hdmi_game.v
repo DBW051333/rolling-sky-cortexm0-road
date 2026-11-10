@@ -1,162 +1,320 @@
-// Direct RGB332 framebuffer writes from the AHB video peripheral.
-// HDMI scans the active viewport of a 240-byte-stride framebuffer.
-module hdmi_game (
-    input soc_clk, pixel_clk, serial_clk, reset,
+// Native portrait display, autonomous RLE background and alpha UI layers.
+// Three RGB332 game buffers, two RGBA332 UI buffers, 4 MiB compressed ring.
+// CPU 0xf0 requests a drained background buffer (0..2) for presentation.
+// 0xf4 reports pending in bit 0, front in 2:1, error in 3, queued buffer in 6:5.
+// A 0xf0 write with bit 8
+// clears error. 0xf8/0xfc count background presentations and scan-miss frames.
+module hdmi_game #(parameter CLEAR_QUADS=131072) (
+    input soc_clk,pixel_clk,serial_clk,reset,
     input write_en,
-    input [16:0] write_addr,
-    input [7:0] write_data,
-    output ready,
-    output [3:0] hdmi_p
+    input [21:0] write_addr,
+    input [8:0] write_data,
+    input flush,
+    output ready,write_ready,idle,
+    output [3:0] hdmi_p,
+    input [7:0] movie_address,
+    input movie_write,
+    input [31:0] movie_data,
+    output [31:0] movie_result
 );
-    reg [2:0] pixel_reset, soc_reset;
-    always @(posedge pixel_clk or posedge reset)
-        if(reset) pixel_reset<=3'b111;
-        else pixel_reset<={pixel_reset[1:0],1'b0};
-    always @(posedge soc_clk or posedge reset)
-        if(reset) soc_reset<=3'b111;
-        else soc_reset<={soc_reset[1:0],1'b0};
-
-    // Scrub uninitialized RAM before accepting writes from the CPU.
-    reg [16:0] clear_addr;
     reg cleared;
-    always @(posedge soc_clk or posedge soc_reset[2])
-        if(soc_reset[2]) begin clear_addr<=0; cleared<=0; end
-        else if(!cleared) begin
-            if(clear_addr==76799) cleared<=1;
-            else clear_addr<=clear_addr+1'b1;
+    reg [1:0] clear_sync;
+    wire cache_initialized,cache_ready,cache_idle;
+    wire ui_initialized,ui_ready,ui_idle;
+    wire [1:0] posted,ui_posted;
+    reg [1:0] acknowledged,ui_acknowledged,post_sync0,post_sync1,ui_post_sync0,ui_post_sync1;
+    wire [7:0] band0,band1,ui_band0,ui_band1;
+    wire [11:0] cache_read_address,ui_read_address;
+    wire [31:0] cache_read_data,ui_read_data;
+    wire [3:0] cache_read_mask,ui_read_mask;
+    wire movie_enabled,overlay_enabled,movie_owner,movie_pixel_valid,movie_back,movie_cache_flush;
+    wire [18:0] movie_pixel_address;
+    wire [7:0] movie_pixel_data;
+    wire upload_request,compressed_request,present_request,present_buffer,ui_request,ui_buffer;
+    wire [21:0] upload_address,compressed_address;
+    wire [127:0] upload_data;
+    reg upload_acknowledge,compressed_acknowledge,present_acknowledge,ui_present_ack;
+    reg [127:0] compressed_data;
+    reg [1:0] upload_sync,compressed_sync,present_sync,ui_present_sync,enabled_sync,overlay_sync;
+    reg [1:0] front;
+    reg ui_front,mode_latched,overlay_latched;
+    reg game_request,game_error;
+    reg [1:0] game_buffer;
+    reg game_acknowledge;
+    reg [2:0] game_ack_sync;
+    reg [1:0] front_sync0,front_sync1,game_request_sync;
+    reg [31:0] display_count,miss_count;
+    reg [31:0] display_gray,miss_gray;
+    reg [31:0] count_sync0,count_sync1,miss_sync0,miss_sync1;
+    reg frame_missed;
+    wire [31:0] movie_register_result;
+    wire game_pending=game_request!=game_ack_sync[2];
+    function [31:0] from_gray(input [31:0] gray);
+        integer bit_number;
+        begin
+            from_gray[31]=gray[31];
+            for(bit_number=30;bit_number>=0;bit_number=bit_number-1)
+                from_gray[bit_number]=from_gray[bit_number+1]^gray[bit_number];
         end
-    assign ready=cleared;
-    wire [16:0] read_addr;
-    wire [7:0] read_data;
-    hdmi_framebuffer framebuffer (.write_clk(soc_clk), .read_clk(pixel_clk),
-        .write_en(!cleared || write_en),
-        .write_addr(cleared ? write_addr : clear_addr),
-        .write_data(cleared ? write_data : 8'd0),
-        .read_addr(read_addr), .read_data(read_data));
-    reg [1:0] cleared_sync;
-    always @(posedge pixel_clk or posedge pixel_reset[2])
-        if(pixel_reset[2]) cleared_sync<=0;
-        else cleared_sync<={cleared_sync[0],cleared};
+    endfunction
+    assign movie_result=movie_address==8'hf4 ? {25'd0,game_buffer,1'b0,game_error,front_sync1,game_pending} :
+        movie_address==8'hf8 ? from_gray(count_sync1) :
+        movie_address==8'hfc ? from_gray(miss_sync1) : movie_register_result;
+    always @(posedge soc_clk or posedge reset)
+        if(reset) begin
+            game_request<=0;game_buffer<=0;game_error<=0;game_ack_sync<=0;front_sync0<=0;front_sync1<=0;
+            count_sync0<=0;count_sync1<=0;miss_sync0<=0;miss_sync1<=0;
+        end else begin
+            game_ack_sync<={game_ack_sync[1:0],game_acknowledge};
+            front_sync0<=front;front_sync1<=front_sync0;
+            count_sync0<=display_gray;count_sync1<=count_sync0;
+            miss_sync0<=miss_gray;miss_sync1<=miss_sync0;
+            if(movie_write && movie_address==8'hf0) begin
+                if(movie_data[8])game_error<=0;
+                else if(!game_pending && cache_idle && !movie_owner && movie_data[1:0]<3)begin
+                    game_buffer<=movie_data[1:0];game_request<=~game_request;
+                end else game_error<=1;
+            end
+        end
+    menu_movie movie(.clk(soc_clk),.reset(reset),.register_address(movie_address),
+        .register_write(movie_write),.register_data(movie_data),.register_result(movie_register_result),
+        .enabled(movie_enabled),.overlay_enabled(overlay_enabled),.owner(movie_owner),
+        .pixel_valid(movie_pixel_valid),.pixel_address(movie_pixel_address),.pixel_data(movie_pixel_data),
+        .back_buffer(movie_back),.pixel_ready(ready && cache_ready),.cache_idle(cache_idle),
+        .cache_flush(movie_cache_flush),.upload_request(upload_request),.upload_address(upload_address),
+        .upload_data(upload_data),.upload_acknowledge(upload_acknowledge),
+        .read_request(compressed_request),.read_address(compressed_address),
+        .read_acknowledge(compressed_acknowledge),.read_data(compressed_data),
+        .present_request(present_request),.present_buffer(present_buffer),.present_acknowledge(present_acknowledge),
+        .ui_request(ui_request),.ui_buffer(ui_buffer),.ui_acknowledge(ui_present_ack),.display_front(front_sync1[0]));
+    always @(posedge soc_clk or posedge reset)
+        if(reset)clear_sync<=0;else clear_sync<={clear_sync[0],cleared};
+    always @(posedge pixel_clk or posedge reset)
+        if(reset) begin
+            post_sync0<=0;post_sync1<=0;ui_post_sync0<=0;ui_post_sync1<=0;
+            upload_sync<=0;compressed_sync<=0;present_sync<=0;ui_present_sync<=0;
+            enabled_sync<=0;overlay_sync<=0;
+            game_request_sync<=0;
+        end else begin
+            post_sync0<=posted;post_sync1<=post_sync0;
+            ui_post_sync0<=ui_posted;ui_post_sync1<=ui_post_sync0;
+            upload_sync<={upload_sync[0],upload_request};
+            compressed_sync<={compressed_sync[0],compressed_request};
+            present_sync<={present_sync[0],present_request};
+            ui_present_sync<={ui_present_sync[0],ui_request};
+            enabled_sync<={enabled_sync[0],movie_enabled};
+            overlay_sync<={overlay_sync[0],overlay_enabled};
+            game_request_sync<={game_request_sync[0],game_request};
+        end
+    assign ready=clear_sync[1] && cache_initialized && ui_initialized;
+    wire cpu_ui=!write_addr[21] && write_addr[20];
+    assign write_ready=ready && (cpu_ui ? ui_ready : !movie_owner && cache_ready);
+    assign idle=cpu_ui ? ui_idle : !movie_owner && cache_idle;
+    video_band_cache cache(.soc_clk(soc_clk),.memory_clk(pixel_clk),.reset(reset),
+        .pixel_valid(ready && (movie_owner ? movie_pixel_valid : write_en && !cpu_ui)),
+        .pixel_x(movie_owner ? movie_pixel_address[18:10] : write_addr[18:10]),
+        .pixel_y(movie_owner ? movie_pixel_address[9:0] : write_addr[9:0]),
+        .pixel_data(movie_owner ? {1'b1,movie_pixel_data} : write_data),
+        .pixel_target(movie_owner ? {1'b0,movie_back} : {write_addr[21],write_addr[19]}),.pixel_ready(cache_ready),
+        .flush(movie_owner ? movie_cache_flush : flush && !cpu_ui),
+        .idle(cache_idle),.initialized(cache_initialized),.posted(posted),.band0(band0),.band1(band1),
+        .acknowledged(acknowledged),.read_address(cache_read_address),.read_data(cache_read_data),.read_mask(cache_read_mask));
+    video_band_cache #(.SINGLE_BANK(1),.DATA_IMPLEMENT("9K"),.PIXEL16(1)) ui_cache(
+        .soc_clk(soc_clk),.memory_clk(pixel_clk),.reset(reset),
+        .pixel_valid(ready && write_en && cpu_ui),.pixel_x(write_addr[18:10]),
+        .pixel_y(write_addr[9:0]),.pixel_data(write_data),.pixel_target(write_addr[20:19]),.pixel_ready(ui_ready),
+        .flush(flush && cpu_ui),.idle(ui_idle),.initialized(ui_initialized),
+        .posted(ui_posted),.band0(ui_band0),.band1(ui_band1),.acknowledged(ui_acknowledged),
+        .read_address(ui_read_address),.read_data(ui_read_data),.read_mask(ui_read_mask));
 
     wire [11:0] x;
     wire [10:0] y;
     wire active,hs,vs;
-    wire [7:0] red,green,blue;
-    wire active_d,hs_d,vs_d;
-    hdmi_raster raster(pixel_clk,pixel_reset[2],x,y,active,hs,vs);
-    hdmi_game_scaler scaler (.clk(pixel_clk), .reset(pixel_reset[2]),
-        .x(x), .y(y), .active(active), .hs(hs), .vs(vs), .ready(cleared_sync[1]),
-        .read_addr(read_addr), .read_data(read_data),
-        .red(red), .green(green), .blue(blue),
-        .active_d(active_d), .hs_d(hs_d), .vs_d(vs_d));
-    hdmi_tmds_tx tx (.pixel_clk(pixel_clk), .serial_clk(serial_clk),
-        .reset(reset), .red(red), .green(green), .blue(blue),
-        .active(active_d), .hs(hs_d), .vs(vs_d), .hdmi_p(hdmi_p));
-endmodule
+    hdmi_raster raster(pixel_clk,reset,x,y,active,hs,vs);
+    reg [31:0] lines [0:511];
+    reg [31:0] ui_lines [0:1023];
+    reg [8:0] source_line,target_line;
+    reg [1:0] repeat_y,repeat_x;
+    reg [9:0] source_column;
+    reg [8:0] tag0,tag1;
+    reg valid0,valid1,fetch,fetch_layer,fetch_ui;
+    reg [6:0] fetch_quad;
+    reg [15:0] fetch_base;
+    reg [31:0] scanned_word,scanned_ui;
+    reg [1:0] byte_select;
+    reg half_select;
+    reg active_d,hs_d,vs_d,image_d;
+    wire line_valid=source_line[0] ? valid1 && tag1==source_line : valid0 && tag0==source_line;
+    always @(posedge pixel_clk) begin
+        scanned_word<=lines[{source_line[0],source_column[9:2]}];
+        scanned_ui<=ui_lines[{source_line[0],source_column[9:1]}];
+        byte_select<=source_column[1:0];half_select<=source_column[0];
+    end
+    wire [15:0] ui_pixel=scanned_ui>>(half_select*16);
+    wire [7:0] pixel=overlay_latched && ui_pixel[8] ? ui_pixel[7:0] : scanned_word>>(byte_select*8);
+    wire [7:0] red=image_d ? {pixel[7:5],pixel[7:5],pixel[7:6]} : 0;
+    wire [7:0] green=image_d ? {pixel[4:2],pixel[4:2],pixel[4:3]} : 0;
+    wire [7:0] blue=image_d ? {4{pixel[1:0]}} : 0;
+    hdmi_tmds_tx tx(pixel_clk,serial_clk,reset,red,green,blue,active_d,hs_d,vs_d,hdmi_p);
 
-// Monitor is physically rotated 90 degrees counterclockwise. Rotate the
-// Native 1920x1080 signal, physically upright 1080x1920 after rotation.
-// Compose 198x320 pixels in columns 21..218 of the 240-byte stride.
-// User-estimated monitor compensation: 60/11 horizontal, 6x vertical scaling.
-// Source = (21+floor(y*11/60), floor((1919-x)/6)); no dividers/DSPs.
-module hdmi_game_scaler (
-    input clk,reset,
-    input [11:0] x,
-    input [10:0] y,
-    input active,hs,vs,ready,
-    output [16:0] read_addr,
-    input [7:0] read_data,
-    output [7:0] red,green,blue,
-    output reg active_d,hs_d,vs_d
-);
-    reg [7:0] source_x;
-    reg [2:0] fraction_x;
-    reg [5:0] fraction_y;
-    reg [16:0] row_address;
-    reg image_d;
-    wire image=active;
-    assign read_addr=image ? row_address+{9'd0,source_x} : 17'd0;
-    always @(posedge clk or posedge reset) begin
-        if(reset) begin
-            source_x<=21; fraction_x<=5; fraction_y<=0; row_address<=17'd76560;
-            active_d<=0; hs_d<=0; vs_d<=0; image_d<=0;
-        end else begin
-            active_d<=active; hs_d<=hs; vs_d<=vs; image_d<=image && ready;
-            // Scan source rows bottom-to-top along each output scanline.
-            // 319*240=76560; initial remainder is 1919 % 6 = 5.
-            if(image && x<1919) begin
-                if(fraction_x==0) begin row_address<=row_address-17'd240; fraction_x<=5; end
-                else fraction_x<=fraction_x-1'b1;
-            end else begin row_address<=17'd76560; fraction_x<=5; end
-            if(x==2199) begin
-                if(y==1124) begin source_x<=21; fraction_y<=0; end
-                else if(y<1079) begin
-                    // Source columns progress left-to-right across output lines.
-                    if(fraction_y>=49) begin source_x<=source_x+1'b1; fraction_y<=fraction_y-6'd49; end
-                    else fraction_y<=fraction_y+6'd11;
-                end
+    localparam IDLE=0,PRELOAD=1,ISSUE=2,WAIT_MEMORY=3,STORE=4;
+    reg [2:0] state,operation;
+    reg flush_active,flush_bank,flush_ui,ui_half;
+    reg [7:0] flush_band;
+    reg [8:0] flush_column;
+    reg [2:0] preload_count;
+    reg [1:0] store_beat;
+    reg [16:0] clear_quad;
+    reg [20:0] burst_address;
+    reg [127:0] burst_data,scan_data;
+    reg [15:0] burst_mask;
+    wire mem_ready,mem_done;
+    wire [127:0] mem_result;
+    wire [1:0] pending=post_sync1^acknowledged;
+    wire [1:0] ui_pending=ui_post_sync1^ui_acknowledged;
+    assign cache_read_address={flush_bank,flush_column,preload_count[1:0]};
+    assign ui_read_address={flush_column,ui_half,preload_count[1:0]};
+    wire [31:0] load_data=flush_ui ? ui_read_data : cache_read_data;
+    wire [3:0] load_mask=flush_ui ? ui_read_mask : cache_read_mask;
+    sdram_word_port memory(.clk(pixel_clk),.reset(reset),.request(state==ISSUE),
+        .write(operation==1 || operation==2 || operation==3 || operation==4),.address(burst_address),
+        .data(burst_data),.mask(burst_mask),.ready(mem_ready),.done(mem_done),.result(mem_result));
+    task finish_column;
+        begin
+            if(flush_ui && !ui_half) ui_half<=1;
+            else begin
+                ui_half<=0;
+                if(flush_column==359) begin
+                    if(flush_ui)ui_acknowledged[0]<=ui_post_sync1[0];
+                    else acknowledged[flush_bank]<=post_sync1[flush_bank];
+                    flush_active<=0;
+                end else flush_column<=flush_column+1'b1;
             end
         end
-    end
-    // Read RAM has one-cycle latency; image/DE/HS/VS are delayed identically.
-    assign red=image_d ? {read_data[7:5],read_data[7:5],read_data[7:6]} : 8'd0;
-    assign green=image_d ? {read_data[4:2],read_data[4:2],read_data[4:3]} : 8'd0;
-    assign blue=image_d ? {4{read_data[1:0]}} : 8'd0;
-endmodule
-
-// Explicit heterogeneous banking keeps the framebuffer within both BRAM pools:
-// 8 x 4096-byte BRAM32K + 43 x 1024-byte BRAM9K = 76800 bytes.
-// Existing CPU uses another 8 BRAM32K and 8 BRAM9K: total 16/16 and 51/64.
-module hdmi_framebuffer (
-    input write_clk,read_clk,write_en,
-    input [16:0] write_addr,read_addr,
-    input [7:0] write_data,
-    output [7:0] read_data
-);
-    wire [407:0] bank_data;
-    reg [5:0] read_bank;
-    always @(posedge read_clk)
-        read_bank<=(read_addr<32768) ? {3'b000,read_addr[14:12]} : (read_addr[16:10]-6'd24);
-    assign read_data=(read_bank<51) ? bank_data[read_bank*8 +: 8] : 8'd0;
-    genvar bank;
-    generate for(bank=0;bank<51;bank=bank+1) begin: banks
-        if(bank<8) begin: ram32k
-            hdmi_ram_bank #(.ADDRESS_BITS(12),.IMPLEMENT("32K")) ram (
-                .wclk(write_clk), .rclk(read_clk),
-                .we(write_en && write_addr<32768 && write_addr[14:12]==bank),
-                .waddr(write_addr[11:0]), .raddr(read_addr[11:0]),
-                .data(write_data), .q(bank_data[bank*8 +: 8]));
-        end else begin: ram9k
-            hdmi_ram_bank #(.ADDRESS_BITS(10),.IMPLEMENT("9K")) ram (
-                .wclk(write_clk), .rclk(read_clk),
-                .we(write_en && write_addr[16:10]==bank+24),
-                .waddr(write_addr[9:0]), .raddr(read_addr[9:0]),
-                .data(write_data), .q(bank_data[bank*8 +: 8]));
+    endtask
+    always @(posedge pixel_clk or posedge reset) begin
+        if(reset) begin
+            source_line<=0;target_line<=0;repeat_y<=0;repeat_x<=0;source_column<=0;
+            tag0<=0;tag1<=0;valid0<=0;valid1<=0;fetch<=0;fetch_quad<=0;fetch_base<=0;
+            fetch_layer<=0;fetch_ui<=0;active_d<=0;hs_d<=0;vs_d<=0;image_d<=0;
+            front<=0;ui_front<=0;mode_latched<=0;overlay_latched<=0;present_acknowledge<=0;ui_present_ack<=0;
+            cleared<=0;acknowledged<=0;ui_acknowledged<=0;state<=IDLE;operation<=0;
+            flush_active<=0;flush_bank<=0;flush_ui<=0;ui_half<=0;flush_band<=0;flush_column<=0;
+            preload_count<=0;store_beat<=0;clear_quad<=0;burst_address<=0;burst_data<=0;
+            burst_mask<=0;scan_data<=0;upload_acknowledge<=0;compressed_acknowledge<=0;compressed_data<=0;
+            game_acknowledge<=0;display_count<=0;miss_count<=0;frame_missed<=0;
+            display_gray<=0;miss_gray<=0;
+        end else begin
+            active_d<=active;hs_d<=hs;vs_d<=vs;image_d<=active && cleared && line_valid;
+            if(active && cleared && !line_valid)frame_missed<=1;
+            if(active && x<1919) begin
+                if(repeat_x==2)begin repeat_x<=0;source_column<=source_column+1'b1;end
+                else repeat_x<=repeat_x+1'b1;
+            end else begin source_column<=0;repeat_x<=0;end
+            if(x==2199) begin
+                if(y==1124)begin source_line<=0;repeat_y<=0;end
+                else if(y<1079)begin
+                    if(repeat_y==2)begin repeat_y<=0;source_line<=source_line+1'b1;end
+                    else repeat_y<=repeat_y+1'b1;
+                end
+            end
+            if(x==0 && y==1080)begin
+                frame_missed<=0;
+                if(frame_missed)begin
+                    miss_count<=miss_count+1'b1;
+                    miss_gray<=(miss_count+32'd1)^((miss_count+32'd1)>>1);
+                end
+                mode_latched<=enabled_sync[1];overlay_latched<=overlay_sync[1];
+                if(present_sync[1]!=present_acknowledge)begin
+                    front<={1'b0,present_buffer};present_acknowledge<=present_sync[1];
+                    display_count<=display_count+1'b1;
+                    display_gray<=(display_count+32'd1)^((display_count+32'd1)>>1);
+                end else if(game_request_sync[1]!=game_acknowledge)begin
+                    front<=game_buffer;game_acknowledge<=game_request_sync[1];
+                    display_count<=display_count+1'b1;
+                    display_gray<=(display_count+32'd1)^((display_count+32'd1)>>1);
+                end
+                if(ui_present_sync[1]!=ui_present_ack)begin
+                    ui_front<=ui_buffer;ui_present_ack<=ui_present_sync[1];
+                end
+            end
+            if(cleared && !fetch && x==0 &&
+               ((y==1080) || (active && repeat_y==0 && source_line<359))) begin
+                target_line<=y==1080?0:source_line+1'b1;
+                fetch_base<=y==1080?0:(source_line+1'b1)*160;
+                fetch_quad<=0;fetch_layer<=0;fetch_ui<=y==1080?overlay_sync[1]:overlay_latched;fetch<=1;
+            end
+            case(state)
+                IDLE: begin
+                    preload_count<=0;
+                    if(!cleared)begin
+                        operation<=2;burst_address<={2'd0,clear_quad,2'b00};
+                        burst_data<=0;burst_mask<=0;state<=ISSUE;
+                    end else if(fetch)begin
+                        operation<=fetch_layer?6:0;
+                        if(fetch_layer)burst_address<=(ui_front?21'h40000:21'h20000)+({5'd0,fetch_base}<<1)+{fetch_quad,2'b00};
+                        else burst_address<=(front==2?21'h180000:front==1?21'h10000:0)+fetch_base+{fetch_quad,2'b00};
+                        burst_mask<=0;state<=ISSUE;
+                    end else if(compressed_sync[1]!=compressed_acknowledge)begin
+                        operation<=5;burst_address<=21'h80000+{1'b0,compressed_address[21:2]};
+                        burst_mask<=0;state<=ISSUE;
+                    end else if(upload_sync[1]!=upload_acknowledge)begin
+                        operation<=4;burst_address<=21'h80000+{1'b0,upload_address[21:2]};
+                        burst_data<=upload_data;burst_mask<=0;state<=ISSUE;
+                    end else if(flush_active)begin operation<=flush_ui?3:1;state<=PRELOAD;end
+                    else if(pending!=0)begin
+                        flush_bank<=!pending[0];flush_band<=pending[0]?band0:band1;
+                        flush_column<=0;flush_ui<=0;ui_half<=0;flush_active<=1;operation<=1;state<=PRELOAD;
+                    end else if(ui_pending[0])begin
+                        flush_bank<=0;flush_band<=ui_band0;flush_column<=0;
+                        flush_ui<=1;ui_half<=0;flush_active<=1;operation<=3;state<=PRELOAD;
+                    end
+                end
+                PRELOAD:begin
+                    preload_count<=preload_count+1'b1;
+                    case(preload_count)
+                        1:begin burst_data[31:0]<=load_data;burst_mask[3:0]<=load_mask;end
+                        2:begin burst_data[63:32]<=load_data;burst_mask[7:4]<=load_mask;end
+                        3:begin burst_data[95:64]<=load_data;burst_mask[11:8]<=load_mask;end
+                        4:begin
+                            burst_data[127:96]<=load_data;burst_mask[15:12]<=load_mask;
+                            if(flush_ui)burst_address<=(flush_band[6]?21'h40000:21'h20000)+flush_column*320+312-{flush_band[5:0],3'd0}+{ui_half,2'd0};
+                            else burst_address<=(flush_band[7]?21'h180000:flush_band[6]?21'h10000:0)+flush_column*160+156-{flush_band[5:0],2'd0};
+                            if({load_mask,burst_mask[11:0]}==16'hffff)begin finish_column();state<=IDLE;end
+                            else state<=ISSUE;
+                        end
+                    endcase
+                end
+                ISSUE:if(mem_ready)state<=WAIT_MEMORY;
+                WAIT_MEMORY:if(mem_done)begin
+                    if(operation==0 || operation==6)begin scan_data<=mem_result;store_beat<=0;state<=STORE;end
+                    else begin
+                        state<=IDLE;
+                        case(operation)
+                            1,3:finish_column();
+                            2:if(clear_quad==CLEAR_QUADS-1)cleared<=1;else clear_quad<=clear_quad+1'b1;
+                            4:upload_acknowledge<=upload_sync[1];
+                            5:begin compressed_data<=mem_result;compressed_acknowledge<=compressed_sync[1];end
+                        endcase
+                    end
+                end
+                STORE:begin
+                    if(operation==6)ui_lines[{target_line[0],fetch_quad,store_beat}]<=scan_data[store_beat*32+:32];
+                    else lines[{target_line[0],fetch_quad[5:0],store_beat}]<=scan_data[store_beat*32+:32];
+                    if(store_beat==3)begin
+                        state<=IDLE;
+                        if(fetch_quad==(fetch_layer?79:39))begin
+                            if(!fetch_layer && fetch_ui)begin fetch_layer<=1;fetch_quad<=0;end
+                            else begin
+                                fetch<=0;
+                                if(target_line[0])begin valid1<=1;tag1<=target_line;end
+                                else begin valid0<=1;tag0<=target_line;end
+                            end
+                        end else fetch_quad<=fetch_quad+1'b1;
+                    end else store_beat<=store_beat+1'b1;
+                end
+                default:state<=IDLE;
+            endcase
         end
-    end endgenerate
-endmodule
-
-module hdmi_ram_bank #(parameter ADDRESS_BITS=10, parameter IMPLEMENT="9K") (
-    input wclk,rclk,we,
-    input [ADDRESS_BITS-1:0] waddr,raddr,
-    input [7:0] data,
-    output [7:0] q
-);
-`ifdef HDMI_SIM_RAM
-    // Icarus cannot read the vendor's encrypted RAM model. Match its NOREG
-    // synchronous read semantics; synthesis always uses the native macro.
-    reg [7:0] mem [0:(1<<ADDRESS_BITS)-1];
-    reg [7:0] read_q;
-    always @(posedge wclk) if(we) mem[waddr]<=data;
-    always @(posedge rclk) read_q<=mem[raddr];
-    assign q=read_q;
-`else
-    EG_LOGIC_BRAM #(.DATA_WIDTH_A(8),.DATA_WIDTH_B(8),
-        .ADDR_WIDTH_A(ADDRESS_BITS),.ADDR_WIDTH_B(ADDRESS_BITS),
-        .MODE("DP"),.IMPLEMENT(IMPLEMENT),.REGMODE_A("NOREG"),.REGMODE_B("NOREG")) memory (
-        .clka(wclk),.addra(waddr),.dia(data),.wea(we),.cea(1'b1),
-        .ocea(1'b1),.rsta(1'b0),.bea(1'b1),.doa(),
-        .clkb(rclk),.addrb(raddr),.dib(8'd0),.web(1'b0),.ceb(1'b1),
-        .oceb(1'b1),.rstb(1'b0),.beb(1'b1),.dob(q));
-`endif
+    end
 endmodule

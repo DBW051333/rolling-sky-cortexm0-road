@@ -5,6 +5,8 @@
 extern Level sd_level;
 extern volatile unsigned sd_diag_stage,sd_diag_response,sd_diag_detail;
 unsigned sd_levels_mount(void);
+uint32_t sd_video_open(void);
+const uint8_t *sd_video_sector(uint32_t index);
 int sd_art_load(uint8_t *target,unsigned capacity);
 unsigned sd_levels_count(void);
 unsigned sd_levels_id(unsigned index);

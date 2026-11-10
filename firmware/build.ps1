@@ -6,14 +6,14 @@ try {
     if(-not $bin){$bin='C:\Keil_v5\ARM\ARMCLANG\bin'}
     if(-not (Test-Path -LiteralPath (Join-Path $bin 'armclang.exe') -PathType Leaf)){throw "Set ARMCLANG_BIN to the folder containing armclang.exe; not found: $bin"}
     New-Item -ItemType Directory -Path Output -Force | Out-Null
-    $flags=@(); $image='code.hex'
+    $flags=@('-DMENU_VIDEO'); $image='code.hex'
     if($Simulation){$image='code.sim.hex'}
-    if($Profile){$flags=@('-DROAD_PROFILE');$image='code.profile.hex'}
-    if($Benchmark){$flags=@('-DROAD_BENCHMARK');$image='code.bench.hex'}
-    foreach($file in @('main','road','menu','flyover','player','level','obstacle','walls','sd_levels','glass','appearance','sound')) {
+    if($Profile){$flags=@('-DMENU_VIDEO','-DROAD_PROFILE');$image='code.profile.hex'}
+    if($Benchmark){$flags=@('-DMENU_VIDEO','-DROAD_BENCHMARK');$image='code.bench.hex'}
+    foreach($file in @('main','road','menu','flyover','player','level','obstacle','walls','sd_levels','glass','appearance','sound','menu_video')) {
         # Keep the gameplay scanline renderer at -O2; compact helpers and the
         # flyover menu use -Oz within 31 KiB; the last 1 KiB is SD art cache.
-        $opt=if($file -in @('menu','flyover','player','appearance','main','sd_levels','walls','level','glass','sound','obstacle')){'-Oz'}else{'-O2'}
+        $opt=if($file -in @('menu','flyover','player','appearance','main','sd_levels','walls','level','glass','sound','obstacle','menu_video')){'-Oz'}else{'-O2'}
         # AC 6.24 otherwise expands the road renderer substantially.
         # Retain -O2 for rendering, but keep its loops compact on Cortex-M0.
         $loopFlags=@()
@@ -31,7 +31,7 @@ try {
             $extraObjects+="Output/$file.o"
         }
     }
-    & "$bin\armlink.exe" --no_scanlib --scatter code.sct --entry Reset_Handler --map --list Output/code.map --callgraph --callgraph_file Output/code.callgraph.html -o Output/code.axf Output/startup.o Output/main.o Output/road.o Output/menu.o Output/flyover.o Output/player.o Output/level.o Output/obstacle.o Output/walls.o Output/sd_levels.o Output/glass.o Output/appearance.o Output/sound.o @extraObjects
+    & "$bin\armlink.exe" --no_scanlib --scatter code.sct --entry Reset_Handler --map --list Output/code.map --callgraph --callgraph_file Output/code.callgraph.html -o Output/code.axf Output/startup.o Output/main.o Output/road.o Output/menu.o Output/flyover.o Output/player.o Output/level.o Output/obstacle.o Output/walls.o Output/sd_levels.o Output/glass.o Output/appearance.o Output/sound.o Output/menu_video.o @extraObjects
     if($LASTEXITCODE){throw 'Link failed'}
     & python "$PSScriptRoot/../tools/check_memory_layout.py"
     if($LASTEXITCODE){throw 'Code overlaps the writable SD artwork cache'}

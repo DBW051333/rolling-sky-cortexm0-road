@@ -26,6 +26,59 @@ static void span(unsigned n,uint16_t c,void *ctx) {
 }
 static void reset(void) { rows=x=count=0; hash=2166136261u; }
 static void complete(void) { assert(rows==ROAD_HEIGHT && x==ROAD_WIDTH && count==ROAD_WIDTH*ROAD_HEIGHT); }
+static uint16_t reference_frame[ROAD_HEIGHT][ROAD_WIDTH];
+static uint8_t sprite_indices[BALL_HEIGHT][BALL_WIDTH];
+static int sprite_left,sprite_top;
+static unsigned sprite_red;
+static uint32_t tile_inks[ROAD_COLS];
+static void prepare_tiles(const uint32_t *materials,void *context) {
+    (void)context;memcpy(tile_inks,materials,sizeof(tile_inks));
+}
+static void prepare_sprite(int left,int top,unsigned red,void *context) {
+    unsigned y,i,n;
+    (void)context;sprite_left=left;sprite_top=top;sprite_red=red;
+    for(y=0;y<BALL_HEIGHT;y++) {
+        const uint8_t *runs=player_row(y,&n);
+        unsigned cursor=0;
+        for(i=0;i<n;i++) {
+            unsigned length=runs[i]>>3;
+            while(length--)sprite_indices[y][cursor++]=(uint8_t)(runs[i]&7u);
+        }
+        assert(cursor==BALL_WIDTH);
+    }
+}
+static void sprite_span(unsigned n,uint16_t colour,void *context) {
+    const uint16_t *palette=player_colors();
+    while(n--) {
+        int dx=(int)x-sprite_left,dy=(int)rows-1-sprite_top;
+        unsigned ink=0;
+        if(dx>=0 && dx<GAME_BALL_WIDTH && dy>=0 && dy<GAME_BALL_HEIGHT)
+            ink=sprite_indices[(dy*17)>>5][(dx*8+7)/15];
+        span(1,ink?(sprite_red?0xf800u:palette[ink]):colour,context);
+    }
+}
+static void tile_row(unsigned scale,unsigned camera,unsigned flags,void *context) {
+    int edges[ROAD_COLS+1];
+    unsigned col;
+    for(col=0;col<=ROAD_COLS;col++) {
+        int product=((int)col*256-(int)camera)*(int)scale;
+        int delta=product<0?-(int)((unsigned)-product>>16):product>>16;
+        edges[col]=road_display_x(ROAD_WIDTH/2+delta);
+    }
+    for(col=0;col<ROAD_COLS;col++) {
+        int right=edges[col+1]>ROAD_WIDTH?ROAD_WIDTH:edges[col+1];
+        while((int)x<right) {
+            uint16_t colour=(uint16_t)(flags&1u || (int)x==edges[col]?tile_inks[col]>>16:tile_inks[col]);
+            if(flags&2u)sprite_span(1,colour,context);else span(1,colour,context);
+        }
+    }
+}
+static void compare_accelerated(Road *road,uint32_t camera) {
+    const RoadSink accelerated={begin,span,0,0,prepare_sprite,sprite_span,prepare_tiles,tile_row};
+    memcpy(reference_frame,frame,sizeof(frame));reset();
+    road_draw(road,camera,0,&accelerated);complete();
+    assert(!memcmp(reference_frame,frame,sizeof(frame)));
+}
 static void save(const char *dir,const char *kind,unsigned skin,unsigned t) {
     char path[512]; FILE *f;
     if(!dir) return;
@@ -35,12 +88,15 @@ static void save(const char *dir,const char *kind,unsigned skin,unsigned t) {
 static void check_sprite(int lift,int red,int hidden) {
     const uint16_t *palette=player_colors(); unsigned y;
     if(hidden) return;
-    for(y=0;y<68;y++) {
-        unsigned n,i,pos=BALL_LEFT; const uint8_t *runs=player_row(y,&n);
-        int sy=BALL_TOP+(int)y-lift;
+    for(y=0;y<GAME_BALL_HEIGHT;y++) {
+        unsigned n,i,pos=GAME_BALL_LEFT,source_x=0;
+        const uint8_t *runs=player_row(y*BALL_HEIGHT/GAME_BALL_HEIGHT,&n);
+        int sy=GAME_BALL_TOP+(int)y-lift;
         for(i=0;i<n;i++) {
-            unsigned end=pos+(runs[i]>>3),index=runs[i]&7u;
-            if(index && sy>=20 && sy<320) {
+            unsigned end,index=runs[i]&7u;
+            source_x+=runs[i]>>3;
+            end=GAME_BALL_LEFT+source_x*15/8;
+            if(index && sy>=20 && sy<ROAD_HEIGHT) {
                 unsigned px;
                 for(px=pos;px<end;px++) assert(frame[sy][px]==(red?0xf800u:palette[index]));
             }
@@ -59,7 +115,7 @@ int main(int argc,char **argv) {
     for(skin=0;skin<PLAYER_COUNT;skin++) {
         Road road; uint32_t camera;
         player_select(skin);
-        for(y=0;y<68;y++) {
+        for(y=0;y<BALL_HEIGHT;y++) {
             const uint8_t *runs=player_row(y,&n); unsigned width=0;
             assert(n && n<=BALL_WIDTH);
             for(i=0;i<n;i++) {
@@ -72,9 +128,9 @@ int main(int argc,char **argv) {
                 }
                 width+=length;
             }
-            assert(width==68);
+            assert(width==BALL_WIDTH);
         }
-        player_row(68,&n); assert(!n);
+        player_row(BALL_HEIGHT,&n); assert(!n);
         player_row(~0u,&n); assert(!n);
         state.focus=(uint8_t)(skin>=4); state.selected=(uint8_t)(skin%5);
         for(i=0;i<4;i++) {
@@ -87,6 +143,10 @@ int main(int argc,char **argv) {
         for(i=0;i<5;i++) {
             int lift,red=0,hidden=0;
             road_init(&road); level_load(&road,&level_one,&camera);
+            {
+                int tile=road_display_x(ROAD_WIDTH/2+(road.scale_q8[ROAD_BALL_Y]>>8))-ROAD_WIDTH/2;
+                assert(tile*15/16-GAME_BALL_WIDTH>=-2 && tile*15/16-GAME_BALL_WIDTH<=2);
+            }
             if(i==1) { road.jump_ms=road.jump_total/2; road.visual_jump_total=road.jump_total+ROAD_VISUAL_LANDING_MS; road.visual_jump_ms=road.visual_jump_total/2; }
             if(i==2) { road.death_kind=GAME_HIT;road.death_ms=70;red=1; }
             if(i==3) { road.death_kind=GAME_FELL;road.death_ms=700; }
@@ -96,6 +156,7 @@ int main(int argc,char **argv) {
             if(i==2) lift-=(int)(70*(400-70)>>11);
             reset();road_draw(&road,camera,0,&sink);complete();
             check_sprite(lift,red,hidden);save(dir,"game",skin,i);
+            compare_accelerated(&road,camera);
         }
         /* Cached and calculated projection must agree across all skins,
          * three levels, five lanes, 37 world phases. */
@@ -109,6 +170,7 @@ int main(int argc,char **argv) {
                 if(j) road_draw_calculated(&road,camera,0,&sink);else road_draw(&road,camera,0,&sink);
                 complete();if(j) assert(hash==first);else first=hash;total++;
             }
+            if(!(phase%28u))compare_accelerated(&road,camera);
         }
     }
     player_select(PLAYER_COUNT);assert(player_selected()==0);

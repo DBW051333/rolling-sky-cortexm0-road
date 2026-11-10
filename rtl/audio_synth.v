@@ -36,6 +36,10 @@ module audio_synth(
     reg [5:0] address;
     reg write_pending;
     reg enable;
+    reg pcm_mode;
+    reg [7:0] pcm_value;
+    reg [1:0] pcm_div;
+    reg pcm_req;
 
     // 24 bit, not 33: firmware's note table is round(f*2^24/31250)>>4 and is
     // written back shifted by 4, so a cycle has to wrap at 2^24.  With a
@@ -98,7 +102,8 @@ module audio_synth(
     integer k;
     always @(posedge HCLK or negedge HRESETn) begin
         if(!HRESETn) begin
-            address<=0; write_pending<=0; enable<=0;
+            address<=0; write_pending<=0; enable<=0; pcm_mode<=0;
+            pcm_value<=8'd128; pcm_div<=0; pcm_req<=0;
             tick<=0; duty<=512; lfsr<=16'hace1; acc<=0;
             for(k=0;k<4;k=k+1) begin
                 phase[k]<=0; inc[k]<=0; dinc[k]<=0;
@@ -119,9 +124,17 @@ module audio_synth(
             else if(tick==10'd1022) begin acc<=acc+c3; tick<=tick+1'b1; end
             else if(tick==10'd1023) begin
                 tick<=0;
-                if(acc>16'sd511) duty<=10'd1023;
-                else if(acc<-16'sd512) duty<=10'd0;
-                else duty<=acc[9:0]+10'd512;
+                if(pcm_mode) begin
+                    if(pcm_div==2'd3) begin
+                        pcm_div<=0; pcm_req<=~pcm_req;
+                        duty<={pcm_value,2'b00};
+                    end else pcm_div<=pcm_div+1'b1;
+                end else begin
+                    pcm_div<=0;
+                    if(acc>16'sd511) duty<=10'd1023;
+                    else if(acc<-16'sd512) duty<=10'd0;
+                    else duty<=acc[9:0]+10'd512;
+                end
                 for(k=0;k<4;k=k+1) begin
                     if(gate[k]) begin
                         phase[k]<=phase[k]+inc[k];
@@ -139,7 +152,10 @@ module audio_synth(
                 write_pending<=HSEL && HTRANS[1] && HWRITE && HSIZE==3'b010;
                 if(HSEL && HTRANS[1]) address<=HADDR[7:2];
                 if(write_pending) begin
-                    if(idx==5'd0) enable<=HWDATA[0];
+                    if(idx==5'd0) begin
+                        enable<=HWDATA[0]; pcm_mode<=HWDATA[1];
+                        if(!HWDATA[1]) pcm_div<=0;
+                    end
                     else if(idx>=5'd1 && idx<=5'd16) begin
                         case(vfield)
                         2'd0: inc[vsel]<=HWDATA[23:0];
@@ -151,6 +167,8 @@ module audio_synth(
                         end
                         default: ;
                         endcase
+                    end else if(idx==5'd18) begin
+                        pcm_value<=HWDATA[7:0];
                     end
                 end
             end
@@ -160,6 +178,7 @@ module audio_synth(
     always @* begin
         HRDATA=0;
         if(idx==5'd17) HRDATA={22'd0,duty};
+        else if(idx==5'd18) HRDATA={21'd0,pcm_req,duty};
         else if(idx==5'd0) HRDATA={31'd0,enable};
     end
 endmodule

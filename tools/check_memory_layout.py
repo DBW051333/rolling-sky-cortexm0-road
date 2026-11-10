@@ -14,9 +14,23 @@ def check(map_path, header_path):
     if not match:
         raise ValueError('Missing linked code region')
     base, size, limit = (int(v, 16) for v in match.groups())
-    if base + size > start or base + limit != start or start + capacity != 32768:
-        raise ValueError(f'Code/cache overlap or mismatch: code end={base+size:#x}, limit={base+limit:#x}, cache={start:#x}+{capacity}')
-    print(f'PASS memory: code {base:#06x}..{base+size:#06x}, limit {start:#06x}; SD cache {start:#06x}..0x8000 ({capacity} B)')
+    if base!=0 or size>limit or base+limit>32768:
+        raise ValueError('Code exceeds physical 32 KiB BRAM')
+    ram=re.search(r'Execution Region RW_IRAM1 \(Base: (0x[\da-fA-F]+), Size: (0x[\da-fA-F]+), Max: (0x[\da-fA-F]+)',text)
+    if not ram:
+        raise ValueError('Missing data RAM region')
+    ram_base,ram_size,ram_limit=(int(v,16) for v in ram.groups())
+    if start<32768:
+        valid=base+limit==start and start+capacity==32768
+    else:
+        valid=ram_base==0x20000000 and ram_base+ram_limit==start and start+capacity==0x20004000
+    if start>=0x20000000:
+        startup=(ROOT/'firmware/startup.s').read_text(encoding='utf-8')
+        stack=re.search(r'__Vectors\s+DCD\s+(0x[0-9a-fA-F]+)',startup)
+        valid=valid and stack is not None and int(stack.group(1),16)==start
+    if not valid or ram_size>ram_limit:
+        raise ValueError('SD cache overlaps code/data/stack or exceeds physical memory')
+    print(f'PASS memory: code end {base+size:#x}/{base+limit:#x}; data {ram_size}/{ram_limit}; SD cache {start:#x}+{capacity}')
 
 if __name__ == '__main__':
     try:

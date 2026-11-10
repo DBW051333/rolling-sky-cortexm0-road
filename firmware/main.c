@@ -7,6 +7,9 @@
 #include "appearance.h"
 #include "sound.h"
 #include "frame_clock.h"
+#ifdef MENU_VIDEO
+#include "menu_video.h"
+#endif
 #define REG(a) (*(volatile uint32_t *)(a))
 #define KEY REG(0x40000000)
 #define KEY_HELD REG(0x40000004)
@@ -22,8 +25,26 @@
 #define SPAN_COLOR REG(0x40050080)
 #define SPAN_COUNT REG(0x40050084)
 #define SPAN_STATUS REG(0x40050088)
+#define VIDEO_FLUSH REG(0x40050090)
+#define VIDEO_PIXELS REG(0x400500a0)
+#define VIDEO_TARGET REG(0x400500b0)
+#define VIDEO_CLOCK REG(0x400500b4)
+#define VIDEO_STALL REG(0x400500b8)
+#define VIDEO_PRESSURE REG(0x400500bc)
+#define VIDEO_PRESENT REG(0x400500f0)
+#define VIDEO_DISPLAY_STATUS REG(0x400500f4)
 volatile uint32_t milliseconds,key_events;
 volatile uint32_t road_frame_count,road_last_frame_ms;
+/* Cycle counts use the 32 MHz free-running video clock counter. Unsigned
+ * differences remain valid across its approximately 134-second wrap. */
+volatile struct {
+    uint32_t draw_cycles,drain_cycles,present_cycles,stall_cycles,pressure_cycles;
+    uint32_t logic_ms,frame_ms,fps_x10,submitted_frames,displayed_frames,scan_misses;
+} game_video_stats;
+static unsigned game_back;
+static uint32_t game_draw_start,game_stall_start,game_pressure_start;
+static uint32_t game_fps_stamp,game_fps_frames,game_present_base;
+static uint32_t hud_divide(uint32_t n,uint32_t d);
 static Road road;
 #ifdef ROAD_BENCHMARK
 void road_baseline_init(void);
@@ -36,22 +57,109 @@ void key_isr(void) { key_events|=KEY; KEY=1; }
 void uart_isr(void) { REG(0x40000108)=8; }
 /* Both menu and gameplay use the same 30 Hz budget. Slow frames continue
  * immediately; elapsed-time simulation remains independent of rendering. */
+static void video_finish(void) {
+    while(SPAN_STATUS&1u) {}
+    VIDEO_FLUSH=1;
+    while(!(SPAN_STATUS&8u)) {}
+}
 static void finish_frame(uint32_t start,unsigned *phase) {
+    video_finish();
     unsigned budget=frame_period_ms(phase);
     road_last_frame_ms=milliseconds-start; road_frame_count++;
     while((uint32_t)(milliseconds-start)<budget) {}
 }
+static void game_video_begin(void) {
+    uint32_t status=VIDEO_DISPLAY_STATUS;
+    unsigned front=(status>>1)&3u;
+    unsigned queued=status&1u?(status>>5)&3u:front;
+    game_back=0;
+    while(game_back==front || game_back==queued)game_back++;
+    while(SPAN_STATUS&1u) {}
+    VIDEO_TARGET=game_back==2u?4u:game_back;
+}
+static void game_video_present(void) {
+    while(VIDEO_DISPLAY_STATUS&1u) {}
+    VIDEO_PRESENT=game_back;
+}
+static void game_render_begin(uint32_t start) {
+    game_video_begin();
+    game_video_stats.logic_ms=milliseconds-start;
+    game_draw_start=VIDEO_CLOCK;
+    game_stall_start=VIDEO_STALL;game_pressure_start=VIDEO_PRESSURE;
+}
+static void game_render_end(uint32_t start) {
+    uint32_t stamp=VIDEO_CLOCK,now,elapsed;
+    game_video_stats.draw_cycles=stamp-game_draw_start;
+    video_finish();
+    game_video_stats.drain_cycles=VIDEO_CLOCK-stamp;
+    game_video_stats.stall_cycles=VIDEO_STALL-game_stall_start;
+    game_video_stats.pressure_cycles=VIDEO_PRESSURE-game_pressure_start;
+    stamp=VIDEO_CLOCK;game_video_present();
+    game_video_stats.present_cycles=VIDEO_CLOCK-stamp;
+    now=milliseconds;elapsed=now-game_fps_stamp;
+    game_video_stats.frame_ms=now-start;
+    game_video_stats.submitted_frames++;
+    game_video_stats.displayed_frames=REG(0x400500f8)-game_present_base;
+    if(elapsed>=1000u) {
+        uint32_t displayed=REG(0x400500f8);
+        game_video_stats.fps_x10=hud_divide((displayed-game_fps_frames)*10000u,elapsed);
+        game_fps_stamp=now;game_fps_frames=displayed;
+    }
+    game_video_stats.scan_misses=REG(0x400500fc);
+}
 static void window(unsigned x,unsigned y,unsigned w,unsigned h) {
-    /* 198x320 composition: measured panel needs 10/11 horizontal correction.
-     * Keep the existing 240-byte RAM stride and center the active columns. */
-    x+=(240u-ROAD_WIDTH)/2u;
     VIDEO_X=((x+w-1u)<<16)|x;
     VIDEO_Y=((y+h-1u)<<16)|y;
     VIDEO_BEGIN=1;
 }
 static void wait_span(void) { while(SPAN_STATUS&1u) {} }
 static void span(unsigned n,uint16_t color,void *context) {
-    (void)context; wait_span(); SPAN_COLOR=color; SPAN_COUNT=n;
+    (void)context; wait_span();
+    if(n<=65535u)REG(0x40050070)=((uint32_t)color<<16)|n;
+    else { SPAN_COLOR=color;SPAN_COUNT=n; }
+}
+static void sprite_prepare(int left,int top,unsigned red,void *context) {
+    (void)context;wait_span();
+    REG(0x40050074)=((uint32_t)(uint16_t)top<<16)|(uint16_t)left;
+    REG(0x40050078)=red;
+}
+static void sprite_span(unsigned n,uint16_t color,void *context) {
+    (void)context;wait_span();REG(0x4005006c)=((uint32_t)color<<16)|n;
+}
+static void sprite_load(void) {
+    const uint16_t *palette=player_colors();
+    unsigned y,i,count;
+    wait_span();REG(0x4005009c)=0;
+    for(i=0;i<8;i++) { wait_span();REG(0x400500ac)=palette[i]; }
+    for(y=0;y<BALL_HEIGHT;y++) {
+        const uint8_t *runs=player_row(y,&count);
+        wait_span();REG(0x40050094)=y*64u;
+        for(i=0;i<count;i++) {
+            unsigned length=runs[i]>>3,ink=runs[i]&7u;
+            while(length--) { wait_span();REG(0x40050098)=ink; }
+        }
+    }
+}
+static void tile_materials(const uint32_t *materials,void *context) {
+    unsigned i;(void)context;wait_span();REG(0x40050044)=0;
+    for(i=0;i<ROAD_COLS;i++) { wait_span();REG(0x40050048)=materials[i]; }
+}
+static void tile_row(unsigned scale,unsigned camera,unsigned flags,void *context) {
+    (void)context;wait_span();REG(0x40050060)=(scale<<16)|camera;
+    REG(0x40050064)=flags;
+}
+/* Shared scanlines are four-byte aligned and contain 360 pixels. */
+static void stream_pixels(const uint16_t *pixels,unsigned count,void *context) {
+    typedef uint32_t PixelPair __attribute__((may_alias));
+    const PixelPair *words=(const PixelPair *)pixels;
+    unsigned pairs=count>>1;
+    (void)context;
+    while(pairs) {
+        unsigned batch=pairs>8?8:pairs,n=batch;
+        wait_span();
+        do { VIDEO_PIXELS=*words++; } while(--n);
+        pairs-=batch;
+    }
 }
 static void begin_line(unsigned x,unsigned y,unsigned n,void *context) {
     (void)x; (void)n; (void)context;
@@ -144,7 +252,6 @@ static void hud_glyph(unsigned x,unsigned y,const uint8_t *rows,uint16_t on);
 static void hud_gem_icon(unsigned x,unsigned y);
 static void hud_volume_bars(void);
 static unsigned hud_tens(unsigned v);
-static uint32_t hud_divide(uint32_t n,uint32_t d);
 static void hud_rect(unsigned x,unsigned y,unsigned w,unsigned h,uint16_t color) {
     unsigned i;
     if(!hud_pixels) { fill(x,y,w,h,color); return; }
@@ -354,6 +461,10 @@ static void video_init(void) {
 /* Keep menu-only locals out of the gameplay stack. Pack the two boolean
  * flags above the five-bit card count so the call needs no stack arguments. */
 static uint8_t menu_cached_level,menu_cached_mechs;
+#ifdef MENU_VIDEO
+static uint8_t ui_previous[sizeof(MenuState)],ui_valid,ui_mode,ui_stage,ui_bar;
+static uint32_t ui_stamp;
+#endif
 static __attribute__((noinline)) void menu_paint(const RoadSink *sink,unsigned selected,
                                                 unsigned flags,uint32_t ticks) {
     unsigned card=flags&31u;
@@ -370,7 +481,28 @@ static __attribute__((noinline)) void menu_paint(const RoadSink *sink,unsigned s
     }
     m.mechs=menu_cached_mechs; m.revision=(uint8_t)sd_levels_format();
     m.level_id=(uint8_t)(card?sd_levels_id(selected):levels[selected]->id);
+#ifdef MENU_VIDEO
+    {
+        unsigned mode=(unsigned)menu_video_active(),stage,bar,i,dirty=!ui_valid;
+        const uint8_t *bytes=(const uint8_t *)&m;
+        volatile uint8_t *saved=ui_previous;
+        ticks=mode?menu_video_time():0;
+        stage=ticks<20000?0u:ticks<40000?1u:ticks<60000?2u:3u;
+        bar=(ticks*52u)>>16;
+        if(mode!=ui_mode || stage!=ui_stage || bar!=ui_bar)dirty=1;
+        for(i=0;i<sizeof(m);i++)if(saved[i]!=bytes[i])dirty=1;
+        if(!dirty || (ui_valid && (uint32_t)(milliseconds-ui_stamp)<200u))return;
+        if(mode && !menu_video_ui_begin())return;
+        if(!mode)game_video_begin();
+        menu_draw(&m,ticks,sink);video_finish();
+        if(mode)menu_video_ui_present();
+        else game_video_present();
+        for(i=0;i<sizeof(m);i++)saved[i]=bytes[i];
+        ui_valid=1;ui_mode=(uint8_t)mode;ui_stage=(uint8_t)stage;ui_bar=(uint8_t)bar;ui_stamp=milliseconds;
+    }
+#else
     menu_draw(&m,ticks,sink);
+#endif
 }
 #ifndef HUD_HOST_TEST
 int main(void) {
@@ -380,7 +512,7 @@ int main(void) {
     unsigned state=GAME_RUNNING,selected=0,card_count=0,sd_error=0,focus=0;
     int menu=1;
     unsigned frame_phase=0;
-    const RoadSink sink={begin_line,span,0};
+    static const RoadSink sink={begin_line,span,0,stream_pixels,sprite_prepare,sprite_span,tile_materials,tile_row};
     milliseconds=0; key_events=0; road_frame_count=0; road_last_frame_ms=0; art_sd_loaded=0;
     player_select(0); menu_cached_level=255;
     road_init(&road);
@@ -394,20 +526,22 @@ int main(void) {
 #define PROFILE_MARK REG(0x4005008c)
         unsigned scene;
         for(scene=0;scene<2;scene++) {
+            ui_valid=0;
             player_select(scene?4:0);
             PROFILE_MARK=scene*4+17;
             menu_paint(&sink,0,scene?64:0,1024);
-            wait_span();
+            video_finish();
             PROFILE_MARK=scene*4+20;
         }
         player_select(0);
+        sprite_load();video_finish();
         for(scene=0;scene<2;scene++) {
             level_load(&road,&level_one,&camera);
             if(scene) camera=21*256-road.depth_q8[ROAD_BALL_Y]-256;
             PROFILE_MARK=scene*4+1;
             (void)level_step(&road,&camera,0,33);
             PROFILE_MARK=scene*4+2;
-            road_draw(&road,camera,points,&sink); wait_span();
+            road_draw(&road,camera,points,&sink); video_finish();
             PROFILE_MARK=scene*4+4;
         }
         for(;;) {}
@@ -427,6 +561,9 @@ int main(void) {
 #endif
 #if !defined(ROAD_PROFILE) && !defined(ROAD_BENCHMARK)
     card_count=sd_levels_mount(); appearance_load(card_count!=0);
+#ifdef MENU_VIDEO
+    ui_valid=0;(void)menu_video_init();menu_video_start();
+#endif
 #endif
     for(;;) {
         frame_start=milliseconds;
@@ -437,10 +574,19 @@ int main(void) {
         /* The animated menu composites each pixel once, including volume. */
         (void)volume_keys(milliseconds);
         if(menu) {
+#ifdef MENU_VIDEO
+            menu_video_start();menu_video_service();
+#endif
             if(keys&(1u<<2)) focus^=1u;
             if(keys&(1u<<4)) {
+#ifdef MENU_VIDEO
+                menu_video_stop();
+#endif
                 card_count=sd_levels_mount(); appearance_load(card_count!=0); sd_error=!card_count;
                 menu_cached_level=255;
+#ifdef MENU_VIDEO
+                ui_valid=0;(void)menu_video_init();menu_video_start();
+#endif
                 selected=0;
             }
             if(keys&(1u<<12)) adc_cycle();
@@ -455,12 +601,20 @@ int main(void) {
             }
             if((keys&(1u<<8)) && focus) { focus=0; keys&=~(1u<<8); }
             if(keys&(1u<<8)) {
+#ifdef MENU_VIDEO
+                menu_video_stop();
+#endif
                 if(!start_level(selected,card_count,&road,&camera)) {
                     card_count=0; sd_error=1; selected=0;
                     continue;
                 }
+                sprite_load();
+#ifdef MENU_VIDEO
+                ui_valid=0;
+#endif
                 state=GAME_RUNNING; paused=0; menu=0; scored=0;
                 last_time=frame_start=milliseconds; keys=0;
+                game_fps_stamp=milliseconds;game_fps_frames=game_present_base=REG(0x400500f8);
             } else {
                 menu_paint(&sink,selected,card_count|(sd_error<<5)|(focus<<6),milliseconds);
                 wait_span();
@@ -531,7 +685,9 @@ int main(void) {
                 if(road.gems_got>best_gems[selected]) best_gems[selected]=road.gems_got;
             }
         }
+        game_render_begin(frame_start);
         road_draw(&road,camera,points,&sink); wait_span();
+        game_render_end(frame_start);
         finish_frame(frame_start,&frame_phase);
     }
 }

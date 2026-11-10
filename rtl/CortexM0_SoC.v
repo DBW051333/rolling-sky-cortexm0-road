@@ -12,9 +12,16 @@ module CortexM0_SoC #(parameter CODE_FILE = "../firmware/code.hex") (
         //input       wire   [15:0]  key_pulse,
 
         output wire video_we,
-        output wire [16:0] video_addr,
-        output wire [7:0] video_data,
+        output wire [21:0] video_addr,
+        output wire [8:0] video_data,
         input wire video_ready,
+        input wire video_write_ready,
+        input wire video_idle,
+        output wire video_flush,
+        output wire [7:0] movie_address,
+        output wire movie_write,
+        output wire [31:0] movie_data,
+        input wire [31:0] movie_result,
         output wire SD_CLK,SD_CS,SD_MOSI,
         input wire SD_MISO,
         output wire audio_pwm
@@ -328,11 +335,11 @@ AHBlite_Block_RAM #(.ADDR_WIDTH(13)) RAMCODE_Interface(
 
 wire [31:0] RAMDATA_RDATA;
 wire [31:0] RAMDATA_WDATA;
-wire [10:0] RAMDATA_WADDR;
-wire [10:0] RAMDATA_RADDR;
+wire [11:0] RAMDATA_WADDR;
+wire [11:0] RAMDATA_RADDR;
 wire [3:0]  RAMDATA_WRITE;
 
-AHBlite_Block_RAM #(.ADDR_WIDTH(11)) RAMDATA_Interface(
+AHBlite_Block_RAM #(.ADDR_WIDTH(12)) RAMDATA_Interface(
         /* Connect to Interconnect Port 1 */
         .HCLK           (clk),
         .HRESETn        (cpuresetn),
@@ -409,7 +416,8 @@ AHBlite_Video Video_Interface(
     .HSEL(HSEL_P3 && HADDR_P3[31:16]==16'h4005),
     .HADDR(HADDR_P3),.HTRANS(HTRANS_P3),.HSIZE(HSIZE_P3),
     .HWRITE(HWRITE_P3),.HWDATA(HWDATA_P3),.HREADY(HREADY_P3),.HRDATA(video_read),
-    .framebuffer_ready(video_ready),.write_en(video_we),.write_addr(video_addr),.write_data(video_data));
+    .movie_address(movie_address),.movie_write(movie_write),.movie_data(movie_data),.movie_result(movie_result),
+    .framebuffer_ready(video_ready),.framebuffer_write_ready(video_write_ready),.framebuffer_idle(video_idle),.flush(video_flush),.write_en(video_we),.write_addr(video_addr),.write_data(video_data));
 
 //------------------------------------------------------------------------------
 // RAM
@@ -424,7 +432,7 @@ Block_RAM #(.ADDR_WIDTH(13), .type(1), .INIT_FILE(CODE_FILE)) RAM_CODE(
         .wea            (RAMCODE_WRITE)
 );
 
-Block_RAM #(.ADDR_WIDTH(11)) RAM_DATA(
+Block_RAM #(.ADDR_WIDTH(12)) RAM_DATA(
         .clka           (clk),
         .addra          (RAMDATA_WADDR),
         .addrb          (RAMDATA_RADDR),

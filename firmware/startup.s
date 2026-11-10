@@ -2,7 +2,7 @@
                 THUMB
                 AREA RESET, DATA, READONLY
                 EXPORT __Vectors
-__Vectors       DCD 0x20002000
+__Vectors       DCD 0x20003c00
                 DCD Reset_Handler
                 DCD Default_Handler
                 DCD Default_Handler

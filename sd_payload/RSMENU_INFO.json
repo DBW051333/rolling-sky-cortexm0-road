@@ -1,0 +1,40 @@
+{
+  "width": 360,
+  "height": 640,
+  "fps": 30,
+  "frames": 2400,
+  "duration_ms": 80000,
+  "file_bytes": 23502848,
+  "mean_frame_bytes": 9533.105833333333,
+  "max_frame_bytes": 21286,
+  "sha256": "311d713df266ce3020ab53ce1c7d4779d64eaf9660b1e95b2768da80c40d4377",
+  "pixel_format": "RGB332",
+  "pixel_order": "portrait row-major, top-left origin",
+  "ui_included": false,
+  "scenes": [
+    {
+      "name": "space",
+      "mean_frame_bytes": 4880.28,
+      "max_frame_bytes": 5438,
+      "duration_ms": 20000
+    },
+    {
+      "name": "mountains",
+      "mean_frame_bytes": 7353.73,
+      "max_frame_bytes": 8188,
+      "duration_ms": 20000
+    },
+    {
+      "name": "city",
+      "mean_frame_bytes": 17910.16,
+      "max_frame_bytes": 21286,
+      "duration_ms": 20000
+    },
+    {
+      "name": "forest",
+      "mean_frame_bytes": 7988.253333333333,
+      "max_frame_bytes": 8812,
+      "duration_ms": 20000
+    }
+  ]
+}

@@ -9,7 +9,7 @@ $sim=(Get-Command vsim.exe -ErrorAction Stop).Source
 $runDir=Join-Path $repo 'tmp/frame_profile'
 New-Item -ItemType Directory -Force $runDir | Out-Null
 $sources=Get-ChildItem "$repo/rtl" -Filter '*.v' |
-    Where-Object {$_.BaseName -notin @('top','eg_adc','hdmi_game','hdmi_test')}
+    Where-Object {$_.BaseName -notin @('top','top_audio','eg_adc','hdmi_game','hdmi_test')}
 $quoted=@($sources | ForEach-Object {'{'+$_.FullName.Replace('\','/')+'}'})
 $quoted+='{' + "$repo/tools/tb_frame_profile.v".Replace('\','/') + '}'
 @('onerror {quit -code 1}','vlib work',('vlog -work work '+($quoted -join ' ')),

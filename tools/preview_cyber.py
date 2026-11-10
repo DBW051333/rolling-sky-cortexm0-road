@@ -11,7 +11,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 WIDTH = int(re.search(r'#define ROAD_WIDTH\s+(\d+)', (ROOT / 'firmware/road.h').read_text()).group(1))
-HEIGHT = 320
+HEIGHT = int(re.search(r'#define ROAD_HEIGHT\s+(\d+)', (ROOT / 'firmware/road.h').read_text()).group(1))
 SKINS = int(re.search(r'#define PLAYER_COUNT\s+(\d+)', (ROOT / 'firmware/player.h').read_text()).group(1))
 
 def load(path):

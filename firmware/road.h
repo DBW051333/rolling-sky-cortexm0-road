@@ -3,13 +3,20 @@
 #include <stdint.h>
 #define ROAD_COLS 5
 #define ROAD_ROWS 16
-#define ROAD_WIDTH 198
-#define ROAD_HEIGHT 320
+#define ROAD_WIDTH 360
+#define ROAD_HEIGHT 640
 #define ROAD_FIRST_Y 0
 #define ROAD_LINES ROAD_HEIGHT
-/* Fixed pitched camera: sin=5/13, cos=12/13; focal=384, height=4,
- * principal point=(ROAD_WIDTH/2,56). One world tile is 256 Q8 units.
- * This gives 24 px/tile at top, 97.615 px/tile at bottom,
+/* The connected portrait panel previously needed about 10% horizontal
+ * correction. Apply it to native geometry; HDMI scanout stays exactly 3x3.
+ * 233/256 approximates 10/11 to within half a pixel across this canvas. */
+static inline int road_display_x(int x) {
+    return ROAD_WIDTH/2+(((x-ROAD_WIDTH/2)*233+128)>>8);
+}
+
+/* Fixed pitched camera: sin=5/13, cos=12/13; focal=768, height=4,
+ * principal point=(ROAD_WIDTH/2,112). One world tile is 256 Q8 units.
+ * This gives 48 px/tile at top, about 195 px/tile at bottom,
  * and 13.07 world rows across the screen height. */
 #define ROAD_BG 0x0843u
 #define ROAD_GRID 0x1926u
@@ -19,7 +26,7 @@
 #define ROAD_CAMERA_MIN 128
 #define ROAD_CAMERA_MAX 1152
 #define ROAD_CAMERA_CENTER 640
-#define ROAD_BALL_Y 192
+#define ROAD_BALL_Y 384
 #define ROAD_JUMP_MS 1366u   /* 0.75 Q8/ms x 1366 = 1024.5 Q8: the reference
                                 four-row pad flight, landing a hair past the
                                 take-off row plus four so chains re-trigger */
@@ -89,9 +96,11 @@ typedef struct {
     void (*begin_line)(unsigned x,unsigned y,unsigned pixels,void *context);
     void (*span)(unsigned pixels,uint16_t color,void *context);
     void *context;
+    void (*pixels)(const uint16_t *pixels,unsigned count,void *context);
 } RoadSink;
 /* Menu and gameplay execute sequentially and share this single scanline. */
 uint16_t *road_scanline_buffer(void);
+void road_fill_pixels(uint16_t *pixels,unsigned count,uint16_t color);
 void road_init(Road *road);
 void road_pan(Road *road,int direction,uint32_t elapsed_ms);
 uint32_t road_forward(Road *road,uint32_t elapsed_ms);

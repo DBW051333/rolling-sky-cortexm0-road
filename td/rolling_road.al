@@ -10,6 +10,9 @@
     </HardWare>
     <Source_Files>
         <Verilog>
+            <File Path="../rtl/menu_movie.v"><FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="23"/></FileInfo></File>
+            <File Path="../rtl/video_band_cache.v"><FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="22"/></FileInfo></File>
+            <File Path="../rtl/sdram_word_port.v"><FileInfo><Attr Name="UsedInSyn" Val="true"/><Attr Name="UsedInP&amp;R" Val="true"/><Attr Name="BelongTo" Val="design_1"/><Attr Name="CompileOrder" Val="21"/></FileInfo></File>
             <File Path="../rtl/hdmi_game.v">
                 <FileInfo>
                     <Attr Name="UsedInSyn" Val="true"/>

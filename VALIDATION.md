@@ -1,3 +1,251 @@
+## SDRAM RLE menu playback integration (2026-11-10)
+
+The validated RSMENU.RLE asset was copied to the FAT32 card and verified on
+the PC. The user then confirmed the card was returned to the powered board
+with JTAG connected.
+The card copy had SHA256 matching the local asset. This change adds CPU FAT32
+sector supply, 128-bit compressed uploads into a 4 MiB SDRAM ring, autonomous
+FPGA RLE decode with encoded CRC32 checks, two RGB332 background buffers,
+and two independent alpha/RGB332 UI buffers. Presentation uses HDMI vertical
+blank. UI rendering is demand-driven and rate-limited to once per 200 ms.
+There is no autonomous SD controller DMA in this implementation.
+
+The background occupies two 256 KiB reservations. UI occupies two 512 KiB
+reservations below 2 MiB. Compressed video occupies 2..6 MiB. Eight frames
+are queued before enabling playback. The asset remains 360x640 portrait,
+with exact 3x HDMI rotation. SD video reads use 8 MHz SPI and existing game
+reads retain 4 MHz. Level and video FAT cursor state is independently saved.
+Missing/corrupt video falls back to a static menu background.
+
+Validation completed before hardware download
+
+- Decoder unit test compared 460800 pixels from actual space/city frames,
+  including sink stalls, 4 MiB ring wrap, upload packing, CRC failure,
+  invalid zero-length runs, double buffering and mid-frame stop/drain.
+- Native writer regression passed all 230400 coordinates, queue stalls,
+  bounds, overflow recovery and fences.
+- Existing end-to-end game writer regression passed full-frame SDRAM
+  transpose, masked partial windows, packed pairs across bands and all
+  2073600 rotated HDMI pixels. Transport time was 9.258 ms in simulation.
+- New menu integration passed both real RLE frames through MMIO upload,
+  SDRAM decode and all 2073600 HDMI pixels with an alpha UI overlay. Opaque
+  black, transparent overwrites, native band boundaries, both background
+  buffers and restoration of the gameplay writer were checked.
+- BL4 protocol regression passed row/bank/memory-end boundaries, per-beat
+  masks and refresh.
+- Production FAT32 code with only block I/O replaced by a host fixture passed
+  fragmented root/files, forward/backward random video seeks, file bounds,
+  artwork loading and preservation of level bytes/cursor state.
+- Production code ends at 0x7544, static data 13200 bytes, with 2160 bytes
+  available below stack top 0x20003c00. The 1 KiB SD art cache stays separate.
+- TD build passed with zero setup and hold violations. Resources were
+  10388/19600 LUT, 4429/19600 registers, 7/29 DSP, 27/64 BRAM9K and 16/16
+  BRAM32K. Existing unconstrained SWCLK/audio-derived-clock warnings remain.
+
+Logs and rollback files are under tmp/menu_player. RTL fixtures can be
+regenerated with python tools/make_menu_test_fixtures.py, then run
+ tools/tb_menu_movie.v and tools/tb_menu_hdmi.v with the SDRAM model in
+ tools/tb_sdram_native.v. HDMI tests define HDMI_SIM_RAM and include vendor
+IO/global simulation modules. The menu integration test shortens startup
+clearing with explicit model initialization, while the game regression
+retains the full production startup clear.
+
+Bitstream SHA256
+02DEC69A3748DB0EFCDEDE3258B4C674522A216E997DD6036C9297B40A9CACB3.
+Firmware HEX SHA256
+C74A18C5F9124A792CDDC4499DAFA831E0AC8E6715DAA78B3BE553EBC5AC54C8.
+JTAG SRAM download completed at 2026-11-10 12:49:56. TD reported chip
+validation success for EAGLE_S20_BG256 and successful program completion.
+The board observation checklist was sent to the user after download.
+
+The user confirmed on the physical board that video was noticeably smoother,
+and that the UI, gameplay and return to the menu all worked normally.
+Nominal asset rate is 30 FPS. Sustained SD throughput and actual playback
+frame rate have not been instrumentally measured.
+
+## Offline RLE menu backgrounds (2026-11-10)
+
+Generated sd_payload/RSMENU.RLE from the current production flyover renderer.
+The asset contains 2400 native 360x640 RGB332 frames at 30 FPS, four scenes
+of 20 seconds each, with UI and audio kept separate. Every frame was decoded
+and compared against its original RGB332 pixels during generation, and the
+finished file was independently reread to check the header, directory,
+sector alignment, decoded sizes, padding and both encoded/decoded CRC32s.
+Run splitting at 255, random pixels, invalid runs and file corruption were
+also tested. Decoded samples from all four scenes were visually inspected.
+
+Size 23502848 bytes; SHA256
+311D713DF266CE3020AB53CE1C7D4779D64EAF9660B1E95B2768DA80C40D4377.
+Mean frame payload 9533.106 bytes; maximum 21286 bytes. This is an encoded
+background asset; board RLE playback is a subsequent integration step. No
+removable SD volume was present during generation. Format and rebuild
+instructions are in sd_payload/RSMENU_FORMAT.md.
+
+## CPU rendering hotspots and packed pixel upload (2026-11-10)
+
+After the queued BL4 build, the user still observed visible choppiness.
+Actual Cortex-M0 RTL profiling with an always-ready pixel sink measured
+599.358/617.831 ms for two menu frames and 92.975/110.962 ms for start/near-wall
+game frames. These numbers isolate CPU/queue work and exclude SDRAM stalls.
+PC sampling identified flyover_line, UI drawing, RLE scanning and ball
+composition as the largest costs.
+
+The span queue now also accepts two RGB565 pixels per 0x400500a0 write.
+The CPU submits at most eight queued pairs between pressure checks. Shared
+scanline buffers are four-byte aligned. Menu frames and buffered game rows
+use that packed path. Background filling uses aligned 32-bit stores, star
+positions use the exact modular inverse instead of testing every pixel,
+planet shading is restricted to the planet bounds, and flat polygon faces
+use bulk fills. The static title is cached in 3293 bytes of packed colour
+indices. Ball-free game scanlines bypass sphere run processing.
+
+The SD artwork cache moves to 0x20003c00..0x20003fff. Code may now use the full
+32 KiB program BRAM. Stack top and data-region limit are 0x20003c00, with
+12596 bytes of static production data and 2764 bytes remaining below that
+limit. The checker validates code/data/cache separation and the stack vector;
+valid production layout and four deliberately invalid boundaries were tested.
+
+Validation
+
+- 340 native RGB565 renderer frames compared byte-for-byte against the
+  pre-optimization renderer, with zero mismatches. Both RLE and packed-row
+  host sinks passed all twelve skins, jump/death states and four tour scenes.
+- End-to-end SDRAM model passed packed pixel pairs across a native row and
+  transpose-band boundary, partial-window masks, fences and all 2073600 HDMI
+  pixels. BL4 and queue regression tests remain passing.
+- The same actual-M0 profiling conditions now measured 218.617/195.072 ms for
+  menu frames and 72.532/89.604 ms for game frames. The first menu includes
+  title-cache initialization. These remain CPU simulation measurements, not
+  physical display FPS or a stable-30-FPS claim.
+- Production code ends at 0x7ecc. Rebuilding after profiling reproduced the
+  exact production HEX SHA256
+  7CE5099EB8D9CE443421473F74CFB72706AF799CB174D10435FA3622B6122A9F.
+- TD full build passed with zero setup/hold violations and minimum margins
+  +0.737/+0.083 ns. LUT 9620/19600, DSP 7/29, BRAM32K 16/16, BRAM9K 6/64.
+- JTAG download succeeded. Bitstream SHA256
+  315CB4C4DC031E18C6815311E3B4DC675B7F13860A520F820837557C07521D64.
+  Updated physical appearance, SD loading and smoothness await user feedback.
+
+Logs and native frame comparisons are in tmp/sdram_burst/. CPU lower bounds
+still identify software rasterization as the remaining frame-rate limit.
+
+## Queued transpose-cache / SDRAM BL4 pipeline (2026-11-10)
+
+The video AHB slave now queues 64 register commands. Status bit 0 indicates
+queue pressure with eight slots reserved for a complete register sequence.
+A fence at 0x40050090 waits for queued spans and SDRAM acknowledgement;
+status bit 3 indicates the full pipeline is drained. Frame timing includes
+that fence. Two 16-row transpose banks use 4x4096x8 BRAM32K data memories and
+4x4096x1 BRAM9K validity memories. The validity masks preserve arbitrary
+partial windows and unmodified bytes across bank switches. Ownership crosses
+clock domains once per band through synchronized post/acknowledge toggles.
+The SDRAM uses sequential BL4/CL3 reads and writes, with scanline reads taking
+priority between bursts. The native canvas, portrait orientation, calibrated
+geometry and accepted 116x128 gameplay sphere remain the same.
+
+The first TD attempt crashed on inferred mixed-width RAM. Explicit uniform-
+width EG_LOGIC_BRAM instances built successfully with TD 5.6.71036.
+
+- Native queue test passed 230400 coordinates with stalls, fences, invalid
+  windows, FIFO overflow reporting and recovery.
+- BL4 protocol test passed row, bank and end-of-memory boundaries, byte masks
+  on every beat and refresh.
+- End-to-end test passed full-frame transpose, partial windows, repeated
+  fences, untouched-byte preservation and all 2073600 HDMI active pixels.
+  Synthetic full-frame span submission and completion took 9.271 ms. This
+  measures the transport pipeline, not Cortex-M0 rendering or board FPS.
+- TD full build passed with zero setup/hold violations and minimum margins
+  +0.647/+0.088 ns. LUT 9749/19600, DSP 7/29, BRAM32K 16/16, BRAM9K 6/64.
+- JTAG download succeeded. Bitstream SHA256
+  F87494E97FEF5810757522E1E8F78F090F597F7C642D4BF172E146D534D6F981.
+- User board feedback: some improvement, but still visibly choppy. CPU
+  rendering is being profiled separately before selecting the next change.
+
+Logs are in tmp/sdram_burst/. The previous board image is before.bit there.
+
+## Gameplay sphere size fine adjustment (2026-11-10)
+
+At the user's request the gameplay sphere is reduced from 124x136 to
+116x128 pixels (about 6% smaller). Native projection and preview dimensions
+are unchanged. Cumulative 15/8 horizontal RLE boundaries prevent gaps between
+runs; vertical sampling maps 128 destination rows to 68 source rows.
+The host verifier passed all twelve skins, jump/death sprite states, menu
+frames and projection comparisons. Firmware code ends at 0x7b14, below the
+0x7c00 SD artwork cache. TD full build passed with zero setup/hold violations
+and minimum margins +0.472/+0.096 ns. JTAG download succeeded. Bitstream
+SHA256 1C7314595550A4EDE4F047EA30E27F3DBB26EE2544C8DDD5D5292D8E68041FFB.
+Board confirmation from the user: sphere size is appropriate and display is normal.
+The accepted gameplay sphere size is 116x128 native pixels.
+
+## Gameplay sphere size (2026-11-10)
+
+The user confirmed the menu preview size but requested a gameplay sphere
+approximately one floor tile wide. At ROAD_BALL_Y=384, the compensated tile
+projects to about 124 pixels. Gameplay now draws the calibrated 62x68 skin
+at 2x2 texels, giving a 124x136 sphere centered on the existing player anchor.
+The menu continues to use the original sprite dimensions. Both road/obstacle
+compositing and gem occlusion use the enlarged bounds and runs. The host
+verifier checks every scaled sprite pixel in jump/death states for all twelve
+skins, plus the sphere width against the floor tile projection. Rendering
+still emits exactly 230400 pixels per frame. Firmware ends at 0x7b08 below
+the 0x7c00 SD art cache. TD full build passed with zero setup/hold violations
+and +0.472/+0.096 ns margins. JTAG download succeeded. Bitstream SHA256
+403EC5D58AE241488C761D428804D45FA50F7058119E96B25CB88CEEDBFC17B1.
+Physical appearance awaits user confirmation.
+
+## Portrait panel geometry calibration (2026-11-10)
+
+The user reported horizontally wide spheres and scenery on the native
+SDRAM build. Source inspection and RLE decoding confirmed a symmetric
+68x68 source silhouette and a 204x204 HDMI footprint with exact 3x3 scanout.
+The physical monitor model and OSD resolution were not supplied. Based on
+the earlier user-confirmed approximately 10% panel correction, this revision
+applies 233/256 horizontal scaling to native world projections and generates
+62x68 sphere artwork. HDMI addressing, SDRAM layout and transport scaling
+remain the same. This is an empirical display calibration, pending a new
+physical observation, rather than a confirmed diagnosis of monitor scaling.
+TD full build and JTAG download passed. Setup/hold violations 0/0, minimum
+margins +0.472/+0.096 ns. Bitstream SHA256
+E0E55A395CD91A39E97BB035FE374B589C79B5BA5C8A9B91E2239C8BAF1D572F.
+All twelve skins, 80 menu frames, 60 sprite-state frames, four flyover scenes
+and 13320 projection frames passed the host verifier. The verifier's sprite
+bounds now follow ROAD_HEIGHT and BALL_WIDTH instead of the former constants.
+
+## Native portrait SDRAM framebuffer (2026-11-10)
+
+The renderer now emits 360x640 RGB332 pixels. The AHB span writer rotates
+coordinates into a contiguous 640x360 layout in the EG4S20 package SDRAM.
+One frame occupies 230400 bytes (225 KiB). HDMI retains its 1920x1080 timing
+and repeats each source pixel exactly three times on both axes. The previous
+198x320 viewport, horizontal compensation and fractional scaler are removed.
+The monitor remains rotated counterclockwise. Two 640-byte BRAM line buffers
+prefetch alternate source scanlines. SDRAM refresh and byte-masked writes are
+arbitrated in the pixel clock domain. A request/acknowledge handshake applies
+backpressure to the 32 MHz span writer. CPU data BRAM is now 16 KiB, including
+9300 bytes of static data and space for the stack. The 1 KiB SD art cache
+remains separate from code.
+
+Validation completed
+
+- Native host renderer verified 230400 pixels per frame across menus, all
+  twelve skins, four flyover scenes, jump/death states and cached/calculated
+  road projection equivalence. See tmp/native_sdram/host.log.
+- tools/tb_native_writer.v verified every rotated pixel address with write
+  stalls, RGB565-to-RGB332 conversion and rejection of invalid windows.
+- tools/tb_sdram_native.v used a behavioural SDRAM protocol model to verify
+  initialization, CL3 reads, refresh, masked CDC writes, the last pixel and
+  all 2073600 active HDMI pixels. This model does not model analogue timing.
+- Firmware compiled. Code ends at 0x7ac4 below SD cache address 0x7c00.
+- TD full build passed with zero setup/hold violations and minimum margins
+  +0.472/+0.096 ns. LUT 8799/19600, BRAM32K 12/16, BRAM9K 2/64.
+- JTAG chip validation and download completed successfully.
+  Bitstream SHA256 C065DC9CDACD95B498C8182713D253BFDE1053638FDD645200EB5E3DBF06CA50.
+
+Board appearance and actual frame rate await user confirmation. The design
+currently uses a single SDRAM framebuffer and conservative single-word
+transactions. Tearing and throughput remain to be measured on the board.
+The pre-change image is saved as tmp/native_sdram/before.bit.
+
 # 验证记录
 
 最新更新：2026-11-09（滑条端点锁定版已构建、JTAG 下载，用户确认中点、两端映射及重开正常；透明计分此前已验收）。以下区分构建/仿真、实体板下载和实物效果。

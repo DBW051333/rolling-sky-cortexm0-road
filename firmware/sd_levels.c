@@ -7,6 +7,8 @@ extern volatile uint32_t milliseconds;
 static uint8_t sector[512],rows[1024];
 static uint32_t row_tags[2],fat_lba,data_lba,clusters,part_end,spc;
 static uint32_t root_cluster;
+static uint32_t sector_tag=0xffffffffu;
+static uint32_t video_first,video_bytes,video_cursor,video_index;
 static uint32_t first_cluster,file_bytes,cursor_cluster,cursor_index,level_start;
 static uint32_t catalog[SD_LEVEL_MAX][2];
 static uint32_t gem_offsets[SD_LEVEL_MAX],mech_offsets[SD_LEVEL_MAX];
@@ -78,16 +80,19 @@ static int initialize(void) {
 static int read_sector(uint32_t lba,uint8_t *target) {
     unsigned i,token;
     uint32_t started=milliseconds;
+    if(target==sector) sector_tag=0xffffffffu;
     if(lba>=part_end || command(17,lba)) { release(); return 0; }
     do { token=transfer(255); } while(token==255 && (uint32_t)(milliseconds-started)<250);
     if(token!=254) { release(); return 0; }
     for(i=0;i<512;i++) target[i]=transfer(255);
     (void)transfer(255); (void)transfer(255); release();
+    if(target==sector) sector_tag=lba;
     return 1;
 }
 static int valid_cluster(uint32_t c) { return c>=2 && c<clusters+2; }
 static uint32_t next_cluster(uint32_t c) {
-    if(!valid_cluster(c) || !read_sector(fat_lba+(c>>7),sector)) return 0;
+    if(!valid_cluster(c))return 0;
+    if(sector_tag!=fat_lba+(c>>7) && !read_sector(fat_lba+(c>>7),sector))return 0;
     return le32(sector+(c&127u)*4)&0x0fffffffu;
 }
 static uint32_t cluster_lba(uint32_t c) { return data_lba+(c-2)*spc; }
@@ -105,7 +110,7 @@ unsigned sd_levels_mount(void) {
     uint32_t start=0,total,fat_size,root,c,steps;
     unsigned i,s,found=0;
     static const char name[]="RSLEVELSBIN";
-    count=0; part_end=0xffffffffu; sd_diag_stage=1; sd_diag_response=255; sd_diag_detail=0;
+    count=0;root_cluster=0;spc=0;sector_tag=0xffffffffu;video_bytes=0;part_end=0xffffffffu; sd_diag_stage=1; sd_diag_response=255; sd_diag_detail=0;
     if(!initialize()) return 0;
     sd_diag_stage=6;
     if(!read_sector(0,sector)) return 0;
@@ -307,29 +312,33 @@ int sd_levels_prepare(Road *road,uint32_t camera) {
     return 1;
 }
 
-/* Read a separate art file, preserving the map file cursor and metadata. */
-int sd_art_load(uint8_t *target,unsigned capacity) {
-    uint32_t saved_first=first_cluster,saved_bytes=file_bytes;
-    uint32_t saved_cursor=cursor_cluster,saved_index=cursor_index;
+/* Find an 8.3 root entry without changing the selected level file. */
+static int find_file(const char *name,uint32_t *first,uint32_t *bytes) {
     uint32_t c=root_cluster,steps,s;
-    unsigned i,k,found=0,ok=0;
-    static const char name[]="RSART   BIN";
-    for(steps=0;valid_cluster(c) && steps<clusters && !found;steps++) {
-        for(s=0;s<spc && !found;s++) {
-            if(!read_sector(cluster_lba(c)+s,sector)) goto done;
+    unsigned i,k;
+    for(steps=0;valid_cluster(c) && steps<clusters;steps++) {
+        for(s=0;s<spc;s++) {
+            if(!read_sector(cluster_lba(c)+s,sector))return 0;
             for(i=0;i<512;i+=32) {
                 const uint8_t *p=sector+i;
-                if(!p[0]) goto done;
-                if(p[0]==0xe5 || (p[11]&0x18) || p[11]==0x0f) continue;
+                if(!p[0])return 0;
+                if(p[0]==0xe5 || (p[11]&0x18) || p[11]==0x0f)continue;
                 for(k=0;k<11 && p[k]==(uint8_t)name[k];k++) {}
                 if(k==11) {
-                    first_cluster=((uint32_t)le16(p+20)<<16)|le16(p+26);
-                    file_bytes=le32(p+28); found=1; break;
+                    *first=((uint32_t)le16(p+20)<<16)|le16(p+26);
+                    *bytes=le32(p+28);return valid_cluster(*first);
                 }
             }
         }
-        if(!found) c=next_cluster(c);
+        c=next_cluster(c);
     }
+    return 0;
+}
+int sd_art_load(uint8_t *target,unsigned capacity) {
+    uint32_t saved_first=first_cluster,saved_bytes=file_bytes;
+    uint32_t saved_cursor=cursor_cluster,saved_index=cursor_index;
+    unsigned i,ok=0;
+    int found=find_file("RSART   BIN",&first_cluster,&file_bytes);
     if(!found || !valid_cluster(first_cluster) || file_bytes<512 ||
        file_bytes>capacity || (file_bytes&511u)) goto done;
     cursor_cluster=first_cluster; cursor_index=0;
@@ -339,4 +348,24 @@ int sd_art_load(uint8_t *target,unsigned capacity) {
     first_cluster=saved_first; file_bytes=saved_bytes;
     cursor_cluster=saved_cursor; cursor_index=saved_index;
     return (int)ok;
+}
+
+uint32_t sd_video_open(void) {
+    video_bytes=0;
+    if(!spc || !find_file("RSMENU  RLE",&video_first,&video_bytes))return 0;
+    video_cursor=video_first;video_index=0;return video_bytes;
+}
+const uint8_t *sd_video_sector(uint32_t index) {
+    uint32_t saved_first=first_cluster,saved_bytes=file_bytes;
+    uint32_t saved_cursor=cursor_cluster,saved_index=cursor_index;
+    int ok;
+    first_cluster=video_first;file_bytes=video_bytes;
+    cursor_cluster=video_cursor;cursor_index=video_index;
+    DIV=1; /* 8 MHz only for video; game reads retain their conservative rate. */
+    ok=file_sector(index,sector);
+    DIV=3;
+    video_cursor=cursor_cluster;video_index=cursor_index;
+    first_cluster=saved_first;file_bytes=saved_bytes;
+    cursor_cluster=saved_cursor;cursor_index=saved_index;
+    return ok?sector:0;
 }

@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Rolling Sky · 关卡工坊</title>
+    <meta
+      name="description"
+      content="拖拽设计五轨道关卡，直接导出适用于 EG4S20 开发板 SD 卡的 RSLEVELS.BIN。"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="codec.js"></script>
+    <script defer src="seed.js"></script>
+    <script defer src="editor.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#"
+        ><span class="brand-icon">◇</span
+        ><span>ROLLING SKY<small>关卡工坊 / LEVEL STUDIO</small></span></a
+      >
+      <span class="hardware">EG4S20 <span>·</span> SD LEVEL V4</span>
+      <div class="top-actions">
+        <button id="help">使用指南</button><button id="import">导入文件</button
+        ><button id="draft">保存 JSON</button
+        ><button id="export" class="primary">导出 SD 关卡包 ↗</button>
+      </div>
+    </header>
+    <main class="workspace">
+      <aside class="left-panel panel">
+        <div class="section-heading">
+          <h2>关卡目录</h2>
+          <span id="catalog-count" class="badge"></span>
+        </div>
+        <p class="hint">导出时包含目录内所有关卡</p>
+        <div id="catalog" class="catalog"></div>
+        <div class="button-row">
+          <button id="new">＋ 新关卡</button><button id="duplicate">复制</button
+          ><button id="delete-level" title="删除当前关卡">删除</button>
+        </div>
+        <div class="divider"></div>
+        <div class="section-heading">
+          <h2>搭建工具</h2>
+          <span class="tiny">拖入轨道 / 点击后涂画</span>
+        </div>
+        <div id="palette" class="palette"></div>
+        <div class="tool-note" id="tool-note"></div>
+        <div class="mini-guide">
+          <span class="keyboard">拖拽</span> 摆放地块与障碍<br /><span
+            class="keyboard"
+            >按住划动</span
+          >
+          连续铺设<br /><span class="keyboard">Ctrl Z</span> 撤销操作
+        </div>
+      </aside>
+      <section class="editor-panel panel">
+        <div class="editor-heading">
+          <div>
+            <div class="eyebrow">TRACK DESIGN</div>
+            <h1 id="active-name"></h1>
+          </div>
+          <span id="save-state" class="save-state" role="status"
+            >草稿准备中</span
+          >
+        </div>
+        <div class="toolbar">
+          <div class="button-row">
+            <button id="undo" title="Ctrl+Z">↶ 撤销</button
+            ><button id="redo" title="Ctrl+Shift+Z">↷ 重做</button>
+          </div>
+          <div class="jump-control">
+            <label for="jump-row">跳到行</label
+            ><input id="jump-row" type="number" min="0" value="0" /><button
+              id="jump"
+            >
+              前往
+            </button>
+          </div>
+          <label class="zoom"
+            >网格
+            <select id="zoom">
+              <option value="52">紧凑</option>
+              <option value="68" selected>标准</option>
+              <option value="88">大格</option>
+            </select></label
+          >
+        </div>
+        <div class="lane-heading">
+          <span>行号</span><span>01</span><span>02</span><span>03</span
+          ><span>04</span><span>05</span>
+        </div>
+        <div
+          id="grid-scroll"
+          class="grid-scroll"
+          aria-label="五轨道关卡编辑区域"
+        >
+          <div id="grid-space"><div id="grid-rows"></div></div>
+        </div>
+        <footer class="grid-footer">
+          <span><i class="dot"></i> 起点 0 → 行号增大为前进方向</span
+          ><span id="view-range"></span>
+        </footer>
+      </section>
+      <aside class="right-panel panel">
+        <div class="section-heading">
+          <h2>关卡设置</h2>
+          <span class="tiny">PROJECT</span>
+        </div>
+        <label class="field"
+          >编辑名称<input id="level-name" maxlength="80"
+        /></label>
+        <div class="field-pair">
+          <label class="field"
+            >稳定 ID<input
+              id="level-id"
+              type="number"
+              min="1"
+              max="65535" /></label
+          ><label class="field"
+            >关卡长度 / 行<input id="length" type="number" min="16" max="65535"
+          /></label>
+        </div>
+        <button id="resize" class="wide">应用关卡长度</button>
+        <p class="hint">
+          16～65,535 行，可随时延长。缩短前会提示被裁掉的内容。
+        </p>
+        <div class="stats">
+          <div><strong id="stat-rows">128</strong><span>行 × 5 轨</span></div>
+          <div><strong id="stat-gems">0/32</strong><span>钻石</span></div>
+          <div><strong id="stat-mechs">0/32</strong><span>动态机关</span></div>
+        </div>
+        <div class="divider"></div>
+        <div class="section-heading">
+          <h2>格子检查器</h2>
+          <span id="selected-position" class="tiny">未选择</span>
+        </div>
+        <p id="cell-description" class="hint">
+          使用“选择”工具点击格子，查看或修改机关参数。
+        </p>
+        <div id="mechanism-settings" hidden>
+          <label class="field"
+            >运动周期<select id="mech-period">
+              <option>1024</option>
+              <option>2048</option>
+              <option>4096</option>
+              <option>8192</option>
+            </select></label
+          >
+          <div class="field-pair">
+            <label class="field"
+              >相位<input id="mech-phase" type="number" min="0" /></label
+            ><label class="field"
+              ><span id="param-label">参数</span
+              ><input id="mech-param" type="number"
+            /></label>
+          </div>
+          <p id="param-help" class="hint"></p>
+          <button id="apply-mech" class="wide">应用机关参数</button>
+        </div>
+        <button id="clear-cell" class="wide" disabled>清除本格物件</button>
+        <div class="divider"></div>
+        <div class="section-heading">
+          <h2>导出检查</h2>
+          <button id="validate">重新检查</button>
+        </div>
+        <div id="validation" class="validation" aria-live="polite"></div>
+        <div class="sd-note">
+          <strong>从网页到开发板</strong>
+          <p>
+            导出文件 → 复制到 FAT32 SD 卡根目录 → 安全弹出 → 开发板断电插卡 →
+            开机，菜单按 KEY4 重读。
+          </p>
+          <p>同名文件先备份。RSART.BIN、菜单视频等资源继续保留。</p>
+        </div>
+      </aside>
+    </main>
+    <input id="file-input" type="file" accept=".json,.bin" hidden />
+    <div id="toast" role="status" class="toast" hidden></div>
+    <dialog id="modal">
+      <div class="modal-heading">
+        <h2 id="modal-title"></h2>
+        <button id="modal-close" aria-label="关闭">✕</button>
+      </div>
+      <div id="modal-body"></div>
+      <div id="modal-actions" class="modal-actions"></div>
+    </dialog>
+  </body>
+</html>

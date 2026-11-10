@@ -1,3 +1,37 @@
+## Browser SD level editor (2026-11-10)
+
+Added the dependency-free offline editor in `web/level-editor/dist/`. It starts
+with the existing five levels and one editable 128-row custom level. The editor
+exports the whole catalog as `RSLEVEL4`, supports JSON drafts and current V4 BIN
+import, and leaves display, physics and audio firmware untouched.
+
+`node web/level-editor/tests/codec.test.cjs` passed 36 checks. The original five
+levels regenerate the tracked 22,528-byte SD pack byte-for-byte. Seed, rich
+object/mechanism, randomized and maximum-catalog cases also match the existing
+Python compiler output exactly. Tests cover malformed offsets/overlapping
+regions, limits, IDs, tile support, collisions, periods and sparse tables.
+
+Browser checks exercised palette-to-grid dragging, continuous painting,
+moving existing cells, undo/redo, mechanism parameter editing, growing from
+128 to 256 rows, shrinking to 16 and undo restoration, BIN download/import,
+JSON download and IndexedDB draft restoration. The browser-downloaded 25,088-byte
+pack contains the original five levels unchanged plus custom ID 6 at 256 rows,
+including a laser with parameter 600. A 65,535-row map remained virtualized with
+60 cell elements at the end of the map. A 390-pixel responsive viewport had no
+horizontal document overflow. Browser error log was empty during these checks.
+
+The editor validates file and hardware limits. Actual custom-route playability
+requires board testing. This task did not write a physical SD card or download
+a new FPGA image. New map names remain in JSON because V4 has no name field.
+
+Private Site publication succeeded at
+https://rolling-sky-level-studio-ligan.elven-melon-1536.chatgpt.site from source
+commit `035837c828215ae556062b71e5f8357b28251822`. The browser reached the private
+sign-in page, so hosted editor interaction after sign-in was not tested.
+Interaction QA used the local HTTP server. Direct `file://` opening could not be
+automated because Browser Use blocks that protocol. The static files use only
+relative classic scripts and CSS, with no CDN or fetch dependency.
+
 ## Game presentation and FPGA rendering acceleration (2026-11-10)
 
 Before changing the working build, all current source, SD menu video and

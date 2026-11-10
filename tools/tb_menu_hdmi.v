@@ -8,7 +8,7 @@ module tb_menu_hdmi;
     reg [31:0] address=0,data=0;
     wire [31:0] response;
     wire we,ready,accept,idle,flush;
-    wire [20:0] pixel_address;
+    wire [21:0] pixel_address;
     wire [8:0] pixel_data;
     wire [3:0] hdmi;
     wire [7:0] movie_address;
@@ -24,7 +24,7 @@ module tb_menu_hdmi;
     reg [7:0] compressed[0:PAYLOAD_BYTES-1];
     reg [7:0] decoded[0:460799];
     integer i,j,offset,location,lane,checked=0;
-    reg checking=0;
+    reg checking=0,third_check=0;
     reg [7:0] expected;
     task bus_write(input [7:0] a,input [31:0] value);
         begin
@@ -99,7 +99,47 @@ module tb_menu_hdmi;
         if(dut.memory.memory.mem[23*160+(639-17)/4][((639-17)%4)*8+:8]!==8'h03)
             $fatal(1,"Game writer after video stop failed");
         wait(!dut.overlay_latched && !dut.mode_latched);
-        $display("PASS gameplay writer restored after movie stop");$finish;
+
+        $display("PASS gameplay writer restored after movie stop");
+        patch(1,23,17,16'hf800);
+        if(dut.front!==0)$fatal(1,"Back-buffer draw changed visible front");
+        bus_write('hf0,1);
+        wait(dut.game_pending);
+        repeat(100)@(posedge pixel_clk);
+        if(dut.front!==0)$fatal(1,"Presentation before vertical blank");
+        // Advance only idle raster time. The real full frame above retains
+        // production raster timing and checks every active output pixel.
+        @(negedge pixel_clk);dut.raster.x=2199;dut.raster.y=1079;
+        wait(!dut.game_pending);repeat(4)@(posedge soc_clk);
+        if(dut.front!==1 || dut.front_sync1!==1 || dut.game_error)
+            $fatal(1,"Game presentation acknowledgement/front failed");
+
+        bus_write('hb0,4);bus_write(0,359<<16);bus_write(4,639<<16);bus_write(8,1);
+        bus_write('h80,16'h07e0);bus_write('h84,230400);fence();
+        for(i=0;i<57600;i=i+1)if(dut.memory.memory.mem['h180000+i]!==32'h1c1c1c1c)
+            $fatal(1,"Third SDRAM buffer write mismatch %0d",i);
+        if(dut.front!==1)$fatal(1,"Third-buffer draw changed front");
+        bus_write('hf0,2);wait(dut.game_pending);
+        patch(0,23,17,16'h07e0);
+        if(dut.front!==1)$fatal(1,"Drawing while presentation pending changed front");
+        @(negedge pixel_clk);dut.raster.x=2199;dut.raster.y=1079;
+        wait(!dut.game_pending);
+        if(dut.front!==2 || dut.front_sync1!==2)$fatal(1,"Third-buffer swap failed");
+        wait(dut.y==1080);wait(dut.y==0);third_check=1;checking=1;checked=0;
+        wait(dut.y==1080);checking=0;third_check=0;
+        if(checked!=2073600)$fatal(1,"Third buffer HDMI count");
+        $display("PASS third SDRAM buffer: full frame, concurrent pending draw and 2073600 HDMI pixels");
+        // Resume video while game buffer 2 is displayed. The decoder must
+        // choose buffer 1 regardless of its pre-game back-buffer history.
+        descriptor(OFFSET0,LENGTH0,TIME0,CRC0);bus_write('hc0,3);
+        wait(dut.movie.state==2);
+        if(dut.movie.back!==1)$fatal(1,"Menu resumed into visible game buffer");
+        wait(dut.movie.present_request!=dut.present_acknowledge);
+        @(negedge pixel_clk);dut.raster.x=2199;dut.raster.y=1079;
+        wait(dut.movie.current_time==TIME0);
+        if(dut.front!==1 || dut.movie.error)$fatal(1,"Menu resume presentation failed");
+        $display("PASS game back-buffer isolation, blank-only swap, ACK and menu resume ownership");
+        $finish;
     end
     integer native_x,native_y;
     always @(posedge pixel_clk) if(checking && dut.active) begin
@@ -107,10 +147,11 @@ module tb_menu_hdmi;
         expected=decoded[230400+native_y*360+native_x];
         if(native_x==20 && native_y==16)expected=0;
         if(native_x==21 && native_y==15)expected='he0;
+        if(third_check)expected='h1c;
         #1;
         if(!dut.image_d || dut.pixel!==expected)
             $fatal(1,"HDMI mismatch x=%0d y=%0d got=%h expected=%h valid=%b",native_x,native_y,dut.pixel,expected,dut.image_d);
         checked=checked+1;
     end
-    initial begin #250000000;$fatal(1,"Timeout");end
+    initial begin #450000000;$fatal(1,"Timeout");end
 endmodule

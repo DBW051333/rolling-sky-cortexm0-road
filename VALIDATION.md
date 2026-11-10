@@ -1,3 +1,102 @@
+## Game presentation and FPGA rendering acceleration (2026-11-10)
+
+Before changing the working build, all current source, SD menu video and
+validation tools were committed as 10149d7736be41ab030fd3e75053a7a2ca364698
+and pushed to origin/feature/cyber-menu-skins. Remote HEAD was checked against
+the local commit. The existing local board-reference PDF was outside that
+source/asset snapshot. Rollback bit/HEX files are under tmp/game_accel.
+
+An initial game double-buffer implementation passed integration tests and
+was downloaded for observation. The final implementation uses three SDRAM
+RGB332 buffers, at byte addresses 0x000000, 0x040000 and 0x600000. The third
+buffer occupies a 256 KiB reservation above the compressed menu ring. It is
+fully rendered before presentation. CPU selection excludes the displayed
+buffer and any pending presentation. After the render fence, publication is
+asynchronous, and only changes scanout during vertical blank. This overlaps
+subsequent rendering with presentation wait. Menu playback waits for pending
+game publication, then decodes into a buffer different from the current front.
+
+Current skin indices are cached in BRAM9K at level entry. The span engine
+performs exact 116x128 scaling, transparency and damage flash. Buffered rows
+retain the software path for gems and foreground occlusion. The hardware road
+engine projects six edges with signed fixed-point arithmetic and rasterizes
+five materials/grid edges for complete, unobstructed road rows. Holes, special
+markers, HUD, walls and more complex composition keep their software path.
+Material choices are cached once per visible world row. Combined colour/count
+commands reduce CPU MMIO transactions. Existing rendering callbacks remain
+supported when accelerator callbacks are absent.
+
+Measurements with the actual Cortex-M0 RTL and an always-ready pixel sink
+
+| Stage | Start scene | Near-wall scene |
+| --- | --- | --- |
+| Previous CPU renderer | 72.532 ms | 89.604 ms |
+| Hardware skin spans and combined commands | 67.022 ms | 84.031 ms |
+| Road projection/raster fast path and cached materials | 36.532 ms | 59.304 ms |
+
+The last row reduces the measured render cost by about 49.6% / 33.8%.
+Measurements isolate rendering and exclude physical SDRAM stalls and display
+presentation. They do not establish physical FPS or sustained 30 FPS. Complex
+obstacle rows continue to incur software rendering cost.
+
+Cycle/FPS instrumentation is exposed through game_video_stats. Clock, pixel
+stall and pressure counters are at video offsets 0xb4/b8/bc. Presentation
+request is 0xf0 with buffer 0..2; bit 8 clears its error. Status at 0xf4 has
+pending bit 0, front bits 2:1, error bit 3 and pending buffer bits 6:5.
+Offsets 0xf8/fc count presentations and scan-miss frames. Counter snapshots
+cross clock domains as registered Gray codes. The front identifier settles
+before game acknowledgment is released. fps_x10 uses actual presentations;
+scan_misses is cumulative since display reset. Cycle differences divided by
+32000 give milliseconds.
+
+Validation
+
+- Host renderer passed 12 skins, 60 jump/death/normal sphere states and 13320
+  cached/calculated projection frames. 1860 accelerated-path frames were
+  compared byte-for-byte with the software path, including five camera lanes,
+  level phases, holes, walls and foreground composition.
+- RTL skin test passed all twelve production textures, exact sizing, alpha,
+  backpressure, red flash, negative clipping and recovery to normal spans.
+- RTL road test passed 342 scale/camera/grid combinations, screen clipping,
+  material colours, sprite composition and command fencing.
+- Production C buffer selection passed all 18 front/pending combinations.
+- Queue regression passed coordinates, bounds, stalls, overflow and fences.
+  RLE regression passed real frame CRC, wrapping, invalid records and stop.
+- SDRAM game transport with combined span commands passed full/partial frames,
+  packed pairs, masks and all 2073600 HDMI pixels; full-frame transport was
+  9.211 ms in simulation.
+- Integrated RLE/UI test passed all 2073600 HDMI pixels. The third game buffer
+  passed all 230400 stored pixels, drawing while a swap was pending, all
+  2073600 HDMI pixels and return to the menu with correct buffer ownership.
+  Tests shorten startup clearing and skip idle raster time between selected
+  ownership checks. Full scanout checks retain production raster timing.
+- One intermediate place/route run had an unresolved routing conflict and
+  produced no accepted new bitstream. The final three-buffer build completed
+  routing, with zero setup/hold violations and +0.688/+0.097 ns minimum margins.
+- Final resources are 11591/19600 LUT, 4962/19600 registers, 9/29 DSP,
+  30/64 BRAM9K and 16/16 BRAM32K. Code ends at 0x7904; static data is 13272
+  bytes with 2088 bytes below stack top and the separate 1 KiB SD art cache.
+
+Generate skin RTL fixtures by compiling tools/make_sprite_test_fixtures.c
+with firmware/player.c, then running from the repository root after creating
+tmp/game_accel. Run tools/tb_sprite_writer.v with rtl/AHBlite_Video.v and
+rtl/video_band_cache.v, defining HDMI_SIM_RAM. Remaining logs, CPU profile
+executables and rollback bitstreams are under tmp/game_accel.
+
+Final bitstream SHA256
+BA472F4B78AD8FA7B13CE70FD8EBC55B73665F36273AD571E8FB47C5C6EF7056.
+Final production HEX SHA256
+47FAC49D53C6CC18D53E5D876331478724F4557DCFC72D82CF1C9924B8A6DF37.
+JTAG SRAM download completed at 2026-11-10 14:08:42. TD reported chip validation
+and programming success. The user was asked to check the final accelerated
+three-buffer build for smoothness, tearing, sprite/obstacle appearance,
+jumping, pause/restart and return to the RLE menu. The user confirmed that
+the initial double-buffer build reduced tearing and preserved pause, restart
+and menu return. For the final accelerated three-buffer build, the user
+confirmed improved smoothness, disappearance of tearing, and normal display
+and switching across the requested checks. Physical FPS has not been
+instrumentally measured.
+
 ## SDRAM RLE menu playback integration (2026-11-10)
 
 The validated RSMENU.RLE asset was copied to the FAT32 card and verified on

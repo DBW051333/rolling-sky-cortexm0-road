@@ -12,7 +12,7 @@ module top(
 );
     wire soc_clk, pixel_clk, serial_clk, pll_locked;
     wire video_we,video_ready,video_write_ready,video_idle,video_flush;
-    wire [20:0] video_addr;
+    wire [21:0] video_addr;
     wire [8:0] video_data;
     wire [7:0] movie_address;
     wire movie_write;

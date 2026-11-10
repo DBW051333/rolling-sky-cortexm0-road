@@ -257,6 +257,14 @@ static void ball_overlay_segment(int left,int right,uint16_t color,unsigned y,
     if(ball_hidden || y<GAME_BALL_TOP || y>=GAME_BALL_TOP+GAME_BALL_HEIGHT || right<=GAME_BALL_LEFT || left>=GAME_BALL_LEFT+GAME_BALL_WIDTH) {
         put(left,right,color); return;
     }
+    if(!line_buffered && line_sink->sprite_span) {
+        if(foreground)put(left,right,color);
+        else {
+            line_pixels+=(unsigned)(right-left);
+            line_sink->sprite_span((unsigned)(right-left),color,line_sink->context);
+        }
+        return;
+    }
     if(left<GAME_BALL_LEFT) put(left,GAME_BALL_LEFT,color);
     x=GAME_BALL_LEFT;
     end=sprite_count;
@@ -683,6 +691,7 @@ static __attribute__((noinline)) void draw(Road *r,uint32_t camera,int points,co
     uint32_t last=(camera+r->depth_q8[0])>>8;
     uint32_t row,previous=0xffffffffu;
     unsigned y,col,mask=31,pads=0,glass=0,shorts=0,bodies=0,barrier=0,warn=0;
+    uint32_t tile_materials[ROAD_COLS];
     unsigned ball_row=(unsigned)((camera+r->depth_q8[ROAD_BALL_Y])>>8);
     const Appearance *look=appearance_for(r->level,ball_row);
     uint16_t body_color=look->solid_front,barrier_color=look->barrier_front;
@@ -713,9 +722,9 @@ static __attribute__((noinline)) void draw(Road *r,uint32_t camera,int points,co
         }
     }
     sprite_palette=player_colors();
+    if(s->sprite_prepare)s->sprite_prepare(GAME_BALL_LEFT,GAME_BALL_TOP-ball_lift,ball_red,s->context);
     for(y=0;y<ROAD_HEIGHT;y++) {
         ball_line_active=!ball_hidden && (unsigned)((int)y+ball_lift-GAME_BALL_TOP)<GAME_BALL_HEIGHT;
-        sprite_runs=player_row(((unsigned)((int)y+ball_lift-GAME_BALL_TOP)*17u)>>5,&sprite_count);
         unsigned depth=cached?r->depth_q8[y]:divide((39104-20*y)*256,2496+12*y);
         unsigned scale=cached?r->scale_q8[y]:divide((2496+12*y)*256,52);
         int x=projected_x(-(int)r->camera_x_q8,scale);
@@ -736,24 +745,40 @@ static __attribute__((noinline)) void draw(Road *r,uint32_t camera,int points,co
             body_color=((const uint16_t *)look)[
                 appearance_model(look->solid_model)->boxes[0].front];
             barrier_color=look->barrier_front;
+            for(col=0;col<ROAD_COLS;col++) {
+                uint16_t color=look->light;
+                if(pads&(1u<<col))color=look->pad;
+                if(shorts&(1u<<col))color=look->short_pad;
+                if(glass&(1u<<col))color=look->fragile;
+                if(bodies&(1u<<col))color=body_color;
+                if(barrier&(1u<<col))color=barrier_color;
+                if(warn&(1u<<col))color=look->dark;
+                tile_materials[col]=(uint32_t)((glass&(1u<<col))?look->fragile_edge:look->grid)<<16|color;
+            }
+            if(s->tile_materials)s->tile_materials(tile_materials,s->context);
         }
         middle=r->center_y[row&(ROAD_ROWS-1)]; horizontal=row!=previous;
         wall_active=(unsigned)walls_line(y); wall_cursor=0;
         line_buffered=(r->overlay && y<r->overlay->rows) || gem_touches(y) || gate_here(y);
+        if(ball_line_active && (line_buffered || !s->sprite_span))
+            sprite_runs=player_row(((unsigned)((int)y+ball_lift-GAME_BALL_TOP)*17u)>>5,&sprite_count);
         line_end=0;
         line_pixels=0;
         s->begin_line(0,y,ROAD_WIDTH,s->context);
         backdrop_line(0,x,y);
+        if(s->tile_row && mask==31 && !line_buffered && !wall_active && !points &&
+           (!((pads|shorts)) || middle<0 || (int)y<middle-1 || (int)y>middle+1)) {
+            int right=projected_x(ROAD_COLS*256-(int)r->camera_x_q8,scale);
+            int left_clipped=x<0?0:x>ROAD_WIDTH?ROAD_WIDTH:x;
+            int right_clipped=right<0?0:right>ROAD_WIDTH?ROAD_WIDTH:right;
+            s->tile_row(scale,r->camera_x_q8,(unsigned)horizontal|(ball_line_active<<1),s->context);
+            line_pixels+=(unsigned)(right_clipped-left_clipped);
+            x=right;
+        } else
         for(col=0;col<ROAD_COLS;col++) {
             int right=projected_x((int)((col+1)*256)-(int)r->camera_x_q8,scale);
             uint16_t grid=look->grid;
-            uint16_t color=look->light;
-            if(pads&(1u<<col)) color=look->pad;
-            if(shorts&(1u<<col)) color=look->short_pad;
-            if(glass&(1u<<col)) color=look->fragile;
-            if(bodies&(1u<<col)) color=body_color;
-            if(barrier&(1u<<col)) color=barrier_color;
-            if(warn&(1u<<col)) color=look->dark;
+            uint16_t color=(uint16_t)tile_materials[col];
             if(!(mask&(1u<<col))) backdrop_line(x,right,y);
             else if(horizontal) composite_segment(x,right,(glass&(1u<<col))?look->fragile_edge:grid,y,0);
             else {

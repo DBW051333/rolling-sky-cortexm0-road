@@ -26,7 +26,8 @@ module menu_movie (
     output reg present_request,present_buffer,
     input present_acknowledge,
     output reg ui_request,ui_buffer,
-    input ui_acknowledge
+    input ui_acknowledge,
+    input display_front
 );
     localparam IDLE=0,LOAD=1,PAIR=2,READ_START=3,READ_WAIT=4,
         DRAW=5,FLUSH=6,FLUSH_WAIT=7,PRESENT_WAIT=8;
@@ -121,7 +122,7 @@ module menu_movie (
                 end else error<=1;
             endcase
             case(state)
-                IDLE: if(enabled && queued!=0) state<=LOAD;
+                IDLE: if(enabled && queued!=0) begin back<=~display_front;state<=LOAD;end
                 LOAD: begin
                     source_offset<=descriptor[21:0];
                     frame_end<=descriptor[21:0]+((descriptor[36:22]+22'd511)&22'h3ffe00);

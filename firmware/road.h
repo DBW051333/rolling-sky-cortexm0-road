@@ -97,6 +97,14 @@ typedef struct {
     void (*span)(unsigned pixels,uint16_t color,void *context);
     void *context;
     void (*pixels)(const uint16_t *pixels,unsigned count,void *context);
+    /* Optional accelerators preserve the ordinary span/pixel fallback.
+     * Sprite spans use the current window cursor and prepared geometry.
+     * Tile materials pack RGB565 grid/fill in the upper/lower halves.
+     * Tile-row flags select horizontal grid (bit 0) and sphere (bit 1). */
+    void (*sprite_prepare)(int left,int top,unsigned red,void *context);
+    void (*sprite_span)(unsigned pixels,uint16_t color,void *context);
+    void (*tile_materials)(const uint32_t *materials,void *context);
+    void (*tile_row)(unsigned scale,unsigned camera,unsigned flags,void *context);
 } RoadSink;
 /* Menu and gameplay execute sequentially and share this single scanline. */
 uint16_t *road_scanline_buffer(void);

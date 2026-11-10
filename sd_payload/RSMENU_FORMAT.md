@@ -101,9 +101,13 @@ SDRAM byte addresses are allocated as follows.
 | Alpha/RGB332 UI 0 | 0x080000 | 512 KiB |
 | Alpha/RGB332 UI 1 | 0x100000 | 512 KiB |
 | Compressed ring | 0x200000 | 4 MiB |
+| Game background 2 | 0x600000 | 256 KiB |
 
 Each UI pixel occupies 16 bits, with alpha in bit 8 and RGB332 in bits 7..0.
-The framebuffer region below 2 MiB is cleared at startup. Eight compressed
+The framebuffer region below 2 MiB is cleared at startup. The third game
+buffer is fully rendered before its first presentation. Game presentation
+uses all three RGB332 buffers, while menu decoding uses buffers 0 and 1.
+Eight compressed
 frames are queued before enabling playback. SD video reads use 8 MHz SPI,
 while existing game reads retain 4 MHz. Video and level FAT cursors are
 saved independently. Decoding and presentation continue while the CPU draws

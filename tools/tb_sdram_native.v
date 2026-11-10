@@ -77,7 +77,7 @@ module tb_sdram_native;
     reg [31:0] address=0,data=0;
     wire [31:0] response;
     wire we,ready,accept,idle,flush;
-    wire [20:0] pixel_address;
+    wire [21:0] pixel_address;
     wire [8:0] pixel_data;
     wire [3:0] hdmi;
     wire [7:0] movie_address;
@@ -123,7 +123,7 @@ module tb_sdram_native;
         end
     endtask
     task span(input integer count,input [7:0] colour);
-        begin room();bus_write('h80,rgb565(colour));bus_write('h84,count);end
+        begin room();bus_write('h70,({16'd0,rgb565(colour)}<<16)|count);end
     endtask
     always @(posedge soc_clk) if(we && !accept) cache_stalls=cache_stalls+1;
     always @(posedge pixel_clk) if(dut.state==dut.ISSUE && dut.mem_ready) begin

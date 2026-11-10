@@ -6,7 +6,7 @@ module tb_native_writer;
     reg [31:0] address=0,data=0;
     wire [31:0] result;
     wire we,flush;
-    wire [20:0] pixel_address;
+    wire [21:0] pixel_address;
     wire [8:0] pixel_data;
     AHBlite_Video dut(clk,reset_n,select,write,1'b1,address,data,transfer,
         3'd2,result,1'b1,accept,cache_idle,we,pixel_address,pixel_data,flush,,,,32'd0);

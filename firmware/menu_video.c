@@ -101,6 +101,9 @@ failed:
 }
 void menu_video_start(void) {
     if(!available || running)return;
+    /* Finish any queued game presentation before the decoder chooses its
+     * first destination. Game buffer 2 is outside the menu framebuffer pair. */
+    while(REG(0x400500f4)&1u) {}
     while(((STATUS>>16)&511u)<8u && available)menu_video_service();
     if(available) {
         /* Frame fences must use the independent UI cache even when no UI

@@ -14,12 +14,13 @@ module tb_menu_movie;
     wire [21:0] upload_address,read_address;
     wire [127:0] upload_data;
     reg upload_ack=0,read_ack=0,present_ack=0,ui_ack=0;
+    reg display_front=0;
     reg [127:0] read_data=0;
     menu_movie dut(clk,reset,address,write,data,result,enabled,overlay,owner,
         valid,pixel_address,pixel_data,back,ready,idle,flush,
         upload_request,upload_address,upload_data,upload_ack,
         read_request,read_address,read_ack,read_data,
-        present_request,present_buffer,present_ack,ui_request,ui_buffer,ui_ack);
+        present_request,present_buffer,present_ack,ui_request,ui_buffer,ui_ack,display_front);
     `include "tmp/menu_player/fixture.vh"
     reg [7:0] compressed[0:PAYLOAD_BYTES-1];
     reg [7:0] expected[0:460799];
@@ -64,7 +65,7 @@ module tb_menu_movie;
             present_delay<=20;
         end else if(present_delay>0)begin
             present_delay<=present_delay-1;
-            if(present_delay==1)begin present_ack<=present_request;presents=presents+1;frame=frame+1;pixels=0;end
+            if(present_delay==1)begin display_front<=present_buffer;present_ack<=present_request;presents=presents+1;frame=frame+1;pixels=0;end
         end
         if(ui_request!=ui_ack)ui_ack<=ui_request;
     end

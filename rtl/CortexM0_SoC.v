@@ -12,7 +12,7 @@ module CortexM0_SoC #(parameter CODE_FILE = "../firmware/code.hex") (
         //input       wire   [15:0]  key_pulse,
 
         output wire video_we,
-        output wire [20:0] video_addr,
+        output wire [21:0] video_addr,
         output wire [8:0] video_data,
         input wire video_ready,
         input wire video_write_ready,

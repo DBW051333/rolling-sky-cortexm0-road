@@ -10,19 +10,19 @@ module tb_frame_profile;
     reg clk=0,reset_n=0;
     always #15.625 clk=~clk;
     wire video_we,video_flush;
-    wire [18:0] video_addr;
-    wire [7:0] video_data;
+    wire [21:0] video_addr;
+    wire [8:0] video_data;
     tri swdio;
     CortexM0_SoC #(.CODE_FILE("../../firmware/code.profile.hex")) soc (
         .clk(clk),.RSTn(reset_n),.SWCLK(1'b0),.SWDIO(swdio),
         .col(4'hf),.row(),.uart_rx(1'b1),.uart_tx(),
         .SD_MISO(1'b1),.SD_CLK(),.SD_CS(),.SD_MOSI(),
         .video_we(video_we),.video_addr(video_addr),.video_data(video_data),
-        .video_ready(1'b1),.video_write_ready(1'b1),.video_idle(1'b1),.video_flush(video_flush),.audio_pwm());
+        .video_ready(1'b1),.video_write_ready(1'b1),.video_idle(1'b1),.video_flush(video_flush),.audio_pwm(),.movie_result(32'd0));
     integer cycles=0,start_cycle=0,pixels=0,frames=0;
     reg marker_pending=0;
     always @(posedge clk) if(video_we) begin
-        if(video_addr!==(((pixels%360)<<10)|(pixels/360))) $fatal(1,"Incorrect portrait viewport address");
+        if(video_addr[18:0]!==(((pixels%360)<<10)|(pixels/360))) $fatal(1,"Incorrect portrait viewport address");
         pixels=pixels+1;
     end
     always @(posedge clk) begin

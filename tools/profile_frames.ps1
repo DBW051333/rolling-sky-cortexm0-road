@@ -12,7 +12,7 @@ $sources=Get-ChildItem "$repo/rtl" -Filter '*.v' |
     Where-Object {$_.BaseName -notin @('top','top_audio','eg_adc','hdmi_game','hdmi_test')}
 $quoted=@($sources | ForEach-Object {'{'+$_.FullName.Replace('\','/')+'}'})
 $quoted+='{' + "$repo/tools/tb_frame_profile.v".Replace('\','/') + '}'
-@('onerror {quit -code 1}','vlib work',('vlog -work work '+($quoted -join ' ')),
+@('onerror {quit -code 1}','vlib work',('vlog +define+HDMI_SIM_RAM -work work '+($quoted -join ' ')),
   'vsim work.tb_frame_profile','run -all','quit -code 0') |
     Set-Content -Encoding ascii "$runDir/profile.do"
 Push-Location $runDir

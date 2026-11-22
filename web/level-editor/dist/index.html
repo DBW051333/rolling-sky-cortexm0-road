@@ -10,6 +10,7 @@
     />
     <link rel="stylesheet" href="styles.css" />
     <script defer src="codec.js"></script>
+    <script defer src="reachability.js"></script>
     <script defer src="seed.js"></script>
     <script defer src="editor.js"></script>
   </head>
@@ -164,6 +165,15 @@
           <button id="validate">重新检查</button>
         </div>
         <div id="validation" class="validation" aria-live="polite"></div>
+        <div class="divider"></div>
+        <div class="section-heading">
+          <h2>整关可达性</h2>
+          <button id="check-route">重新模拟</button>
+        </div>
+        <div class="validation" aria-live="polite">
+          <p id="route-status">等待模拟</p>
+          <button id="route-jump" class="wide" hidden></button>
+        </div>
         <div class="sd-note">
           <strong>从网页到开发板</strong>
           <p>

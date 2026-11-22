@@ -305,6 +305,7 @@
     }
   };
   function changed() {
+    scheduleRouteCheck();
     $("undo").disabled = !history.length;
     $("redo").disabled = !future.length;
     $("save-state").textContent = db ? "正在保存草稿…" : "浏览器内编辑";
@@ -342,10 +343,6 @@
         p.textContent = warning;
         box.append(p);
       }
-      const note = document.createElement("p");
-      note.className = "hint";
-      note.textContent = "路线能否通过，需要在开发板上实际试玩。";
-      box.append(note);
       return true;
     } catch (error) {
       const p = document.createElement("p");
@@ -356,6 +353,50 @@
     }
   }
   $("validate").onclick = validate;
+  let routeTimer, routeResult;
+  function scheduleRouteCheck(delay = 350) {
+    clearTimeout(routeTimer);
+    routeResult = null;
+    const status = $("route-status");
+    status.textContent = "正在模拟从起点到终点的路线…";
+    status.className = "hint";
+    $("route-jump").hidden = true;
+    const search = window.RSReachability.analyze(level());
+    function run() {
+      const deadline = performance.now() + 8;
+      let update;
+      do {
+        update = search.next();
+      } while (!update.done && performance.now() < deadline);
+      if (!update.done) {
+        routeTimer = setTimeout(run, 0);
+        return;
+      }
+      routeResult = update.value;
+      const { status: result, row, limited, uncertainCollision } = routeResult;
+      status.className = result === "pass" ? "ok" : result === "blocked" ? "error" : "warning";
+      if (result === "pass") {
+        status.textContent = "理论可通关。按 33/33/34 毫秒的帧节奏，找到至少一种按键走法。";
+        return;
+      }
+      status.textContent = result === "blocked"
+        ? `确定堵死。即使允许每步自由调整横向位置，路线也在第 ${row} 行附近全部中断。`
+        : uncertainCollision
+          ? `未能确认。第 ${row} 行附近的飞锤超出了可可靠模拟的碰撞范围。`
+          : limited
+          ? `未能确认。搜索达到计算上限，参考位置为第 ${row} 行。`
+          : `按键模拟在第 ${row} 行附近未找到走法。更灵活的操控仍有可能通过。`;
+      $("route-jump").textContent = `定位到第 ${row} 行`;
+      $("route-jump").hidden = false;
+    }
+    routeTimer = setTimeout(run, delay);
+  }
+  $("check-route").onclick = () => scheduleRouteCheck(0);
+  $("route-jump").onclick = () => {
+    if (!routeResult) return;
+    $("jump-row").value = routeResult.row;
+    $("jump").click();
+  };
   function selectTool(key) {
     tool = key;
     for (const b of $("palette").querySelectorAll("button")) {
@@ -492,6 +533,7 @@
     validate();
   }
   function refresh() {
+    scheduleRouteCheck();
     const l = level();
     renderCatalog();
     $("active-name").textContent = l.name;
@@ -894,9 +936,12 @@
     commitStroke();
     C.validate(levels);
     const bytes = C.encode(levels);
+    const routeNotice = routeResult?.status === "blocked"
+      ? `\n\n当前关卡的路线在第 ${routeResult.row} 行附近堵死，请检查后再写入 SD 卡。`
+      : "";
     dialog(
       "导出 SD 关卡包",
-      `包含目录内 ${levels.length} 个关卡，共 ${(bytes.length / 1024).toFixed(1)} KB。\n\n下载文件名为 RSLEVELS.BIN，复制到 FAT32 SD 卡根目录即可。已有同名文件请先备份，其他资源继续保留。\n\n开发板按目录顺序显示关卡编号。编辑名称保存在 JSON 草稿中。外观由原有 RSART.BIN 的稳定 ID 决定，新 ID 默认使用板端基础外观。`,
+      `包含目录内 ${levels.length} 个关卡，共 ${(bytes.length / 1024).toFixed(1)} KB。\n\n下载文件名为 RSLEVELS.BIN，复制到 FAT32 SD 卡根目录即可。已有同名文件请先备份，其他资源继续保留。\n\n开发板按目录顺序显示关卡编号。编辑名称保存在 JSON 草稿中。外观由原有 RSART.BIN 的稳定 ID 决定，新 ID 默认使用板端基础外观。${routeNotice}`,
       [
         { label: "返回编辑" },
         {
